@@ -3,13 +3,18 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"sync"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hanwen/go-fuse/v2/fuse"
 	"gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/object"
 )
 
 type gitFSRoot struct {
@@ -41,13 +46,111 @@ func (g *gitFSRoot) OnAdd(ctx context.Context) {
 	for _, ent := range tree.Entries {
 		log.Println(ent)
 		if ent.Mode.IsFile() {
-			ch := ino.NewInode(context.Background(), &fs.Inode{}, fs.StableAttr{})
+			obj, err := g.repo.BlobObject(ent.Hash)
+			if err != nil {
+				log.Printf("Error locating blob object for %s", ent.Name)
+				continue
+			}
+			reader, err := obj.Reader()
+			if err != nil {
+				log.Printf("Error fetching reader for blob object for %s", ent.Name)
+				continue
+			}
+			contents, err := ioutil.ReadAll(reader)
+			if err != nil {
+				log.Printf("Error reading blob contents for %s", ent.Name)
+				continue
+			}
+			ch := ino.NewInode(context.Background(), &fs.MemRegularFile{
+				Data: contents,
+			}, fs.StableAttr{})
 			ino.AddChild(ent.Name, ch, true)
 		} else {
-			ch := ino.NewInode(context.Background(), &fs.Inode{}, fs.StableAttr{Mode: syscall.S_IFDIR})
+			ch := ino.NewInode(context.Background(), &gitTreeInode{repo: g.repo, treeHash: ent.Hash}, fs.StableAttr{Mode: syscall.S_IFDIR})
 			ino.AddChild(ent.Name, ch, true)
 		}
 	}
+}
+
+type gitTreeInode struct {
+	fs.Inode
+
+	mu            sync.Mutex
+	repo          *git.Repository
+	treeHash      plumbing.Hash
+	cached        bool
+	cachedEntries []object.TreeEntry
+}
+
+func (g *gitTreeInode) scanTree() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.cached {
+		return nil
+	}
+
+	tree, err := g.repo.TreeObject(g.treeHash)
+	if err != nil {
+		log.Printf("Error fetching tree object %s", g.treeHash)
+		return io.ErrUnexpectedEOF
+	}
+
+	g.cached = true
+	g.cachedEntries = tree.Entries
+	return nil
+}
+
+func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	if err := g.scanTree(); err != nil {
+		return nil, syscall.EAGAIN
+	}
+
+	result := make([]fuse.DirEntry, 0, len(g.cachedEntries))
+
+	for _, ent := range g.cachedEntries {
+		log.Println(ent)
+		result = append(result, fuse.DirEntry{Name: ent.Name, Mode: uint32(ent.Mode)})
+	}
+
+	return fs.NewListDirStream(result), 0
+}
+
+func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if err := g.scanTree(); err != nil {
+		return nil, syscall.EAGAIN
+	}
+
+	for _, ent := range g.cachedEntries {
+		if ent.Name != name {
+			continue
+		}
+
+		if ent.Mode.IsFile() {
+			obj, err := g.repo.BlobObject(ent.Hash)
+			if err != nil {
+				log.Printf("Error locating blob object for %s", ent.Name)
+				return nil, syscall.EAGAIN
+			}
+			reader, err := obj.Reader()
+			if err != nil {
+				log.Printf("Error fetching reader for blob object for %s", ent.Name)
+				return nil, syscall.EAGAIN
+			}
+			contents, err := ioutil.ReadAll(reader)
+			if err != nil {
+				log.Printf("Error reading blob contents for %s", ent.Name)
+				return nil, syscall.EAGAIN
+			}
+			return g.NewInode(context.Background(), &fs.MemRegularFile{
+				Data: contents,
+			}, fs.StableAttr{}), 0
+		} else {
+			return g.NewInode(context.Background(), &gitTreeInode{repo: g.repo, treeHash: ent.Hash}, fs.StableAttr{Mode: syscall.S_IFDIR}), 0
+		}
+	}
+
+	return nil, syscall.ENOENT
 }
 
 func main() {
