@@ -84,6 +84,7 @@ type gitTreeInode struct {
 	treeHash      plumbing.Hash
 	cached        bool
 	cachedEntries []object.TreeEntry
+	lookupIndex   map[string]object.TreeEntry
 }
 
 func (g *gitTreeInode) scanTree() error {
@@ -94,6 +95,8 @@ func (g *gitTreeInode) scanTree() error {
 		return nil
 	}
 
+	defer printTimeSince("Scan Tree", time.Now())
+
 	tree, err := g.repo.TreeObject(g.treeHash)
 	if err != nil {
 		log.Printf("Error fetching tree object %s", g.treeHash)
@@ -102,6 +105,11 @@ func (g *gitTreeInode) scanTree() error {
 
 	g.cached = true
 	g.cachedEntries = tree.Entries
+	g.lookupIndex = make(map[string]object.TreeEntry, len(g.cachedEntries))
+	for _, ent := range g.cachedEntries {
+		g.lookupIndex[ent.Name] = ent
+	}
+
 	return nil
 }
 
@@ -134,36 +142,82 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 		return nil, syscall.EAGAIN
 	}
 
-	for _, ent := range g.cachedEntries {
-		if ent.Name != name {
-			continue
-		}
-
+	if ent, ok := g.lookupIndex[name]; ok {
 		if ent.Mode.IsFile() {
-			obj, err := g.repo.BlobObject(ent.Hash)
-			if err != nil {
-				log.Printf("Error locating blob object for %s", ent.Name)
-				return nil, syscall.EAGAIN
-			}
-			reader, err := obj.Reader()
-			if err != nil {
-				log.Printf("Error fetching reader for blob object for %s", ent.Name)
-				return nil, syscall.EAGAIN
-			}
-			contents, err := ioutil.ReadAll(reader)
-			if err != nil {
-				log.Printf("Error reading blob contents for %s", ent.Name)
-				return nil, syscall.EAGAIN
-			}
-			return g.NewInode(context.Background(), &fs.MemRegularFile{
-				Data: contents,
-			}, fs.StableAttr{}), 0
+			return g.NewInode(context.Background(), &gitFile{repo: g.repo, blobHash: ent.Hash}, fs.StableAttr{}), 0
 		} else {
 			return g.NewInode(context.Background(), &gitTreeInode{repo: g.repo, treeHash: ent.Hash}, fs.StableAttr{Mode: syscall.S_IFDIR}), 0
 		}
 	}
 
 	return nil, syscall.ENOENT
+}
+
+type gitFile struct {
+	fs.Inode
+
+	mu        sync.Mutex
+	repo      *git.Repository
+	blobHash  plumbing.Hash
+	cached    bool
+	cachedObj *object.Blob
+}
+
+func (f *gitFile) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	return nil, fuse.FOPEN_KEEP_CACHE, 0
+}
+
+func (f *gitFile) cacheAttrs() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.cached {
+		return nil
+	}
+
+	obj, err := f.repo.BlobObject(f.blobHash)
+	if err != nil {
+		log.Println("Error locating blob object")
+		return err
+	}
+
+	f.cached = true
+	f.cachedObj = obj
+
+	return nil
+}
+
+func (f *gitFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	if f.cacheAttrs() != nil {
+		return syscall.EAGAIN
+	}
+	out.Attr.Size = uint64(f.cachedObj.Size)
+	return 0
+}
+
+func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	if f.cacheAttrs() != nil {
+		return nil, syscall.EAGAIN
+	}
+
+	r, err := f.cachedObj.Reader()
+	if err != nil {
+		log.Println("Error getting reader", err)
+		return nil, syscall.EAGAIN
+	}
+
+	data, err := ioutil.ReadAll(r)
+	if err != nil {
+		log.Println("Error reading file", err)
+		return nil, syscall.EAGAIN
+	}
+
+	end := int(off) + len(dest)
+	if end > len(data) {
+		end = len(data)
+	}
+
+	return fuse.ReadResultData(data[off:end]), 0
 }
 
 func main() {
@@ -192,6 +246,8 @@ func main() {
 
 	opts := &fs.Options{}
 	opts.Debug = *debug
+	opts.DisableXAttrs = true
+
 	server, err := fs.Mount(flag.Arg(1), &gitFSRoot{repo: repo}, opts)
 	if err != nil {
 		log.Fatalf("Mount fail: %v\n", err)
