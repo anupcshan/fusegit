@@ -9,12 +9,17 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
+)
+
+var (
+	debug = flag.Bool("debug", false, "print debug data")
 )
 
 type gitFSRoot struct {
@@ -44,7 +49,6 @@ func (g *gitFSRoot) OnAdd(ctx context.Context) {
 
 	ino := g.EmbeddedInode()
 	for _, ent := range tree.Entries {
-		log.Println(ent)
 		if ent.Mode.IsFile() {
 			obj, err := g.repo.BlobObject(ent.Hash)
 			if err != nil {
@@ -101,7 +105,15 @@ func (g *gitTreeInode) scanTree() error {
 	return nil
 }
 
+func printTimeSince(action string, start time.Time) {
+	if *debug {
+		log.Printf("Completed %s in %s", action, time.Since(start))
+	}
+}
+
 func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	defer printTimeSince("Readdir", time.Now())
+
 	if err := g.scanTree(); err != nil {
 		return nil, syscall.EAGAIN
 	}
@@ -109,7 +121,6 @@ func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 	result := make([]fuse.DirEntry, 0, len(g.cachedEntries))
 
 	for _, ent := range g.cachedEntries {
-		log.Println(ent)
 		result = append(result, fuse.DirEntry{Name: ent.Name, Mode: uint32(ent.Mode)})
 	}
 
@@ -117,6 +128,8 @@ func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 }
 
 func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	defer printTimeSince("Lookup", time.Now())
+
 	if err := g.scanTree(); err != nil {
 		return nil, syscall.EAGAIN
 	}
@@ -156,7 +169,6 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 func main() {
 	log.SetFlags(log.Lmicroseconds | log.Lshortfile)
 
-	debug := flag.Bool("debug", false, "print debug data")
 	flag.Parse()
 	if len(flag.Args()) < 2 {
 		log.Fatalf("Usage:\n %s repo-url MOUNTPOINT", os.Args[0])
