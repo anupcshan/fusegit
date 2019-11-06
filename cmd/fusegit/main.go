@@ -22,60 +22,6 @@ var (
 	debug = flag.Bool("debug", false, "print debug data")
 )
 
-type gitFSRoot struct {
-	fs.Inode
-
-	repo *git.Repository
-}
-
-var _ = (fs.NodeOnAdder)((*gitFSRoot)(nil))
-
-func (g *gitFSRoot) OnAdd(ctx context.Context) {
-	log.Println("OnAdd called")
-	headRef, err := g.repo.Head()
-	if err != nil {
-		log.Println("Error locating HEAD")
-		return
-	}
-	headCommit, err := g.repo.CommitObject(headRef.Hash())
-	if err != nil {
-		log.Println("Error identifying head commit")
-		return
-	}
-	tree, err := headCommit.Tree()
-	if err != nil {
-		log.Println("Error locating head tree")
-	}
-
-	ino := g.EmbeddedInode()
-	for _, ent := range tree.Entries {
-		if ent.Mode.IsFile() {
-			obj, err := g.repo.BlobObject(ent.Hash)
-			if err != nil {
-				log.Printf("Error locating blob object for %s", ent.Name)
-				continue
-			}
-			reader, err := obj.Reader()
-			if err != nil {
-				log.Printf("Error fetching reader for blob object for %s", ent.Name)
-				continue
-			}
-			contents, err := ioutil.ReadAll(reader)
-			if err != nil {
-				log.Printf("Error reading blob contents for %s", ent.Name)
-				continue
-			}
-			ch := ino.NewInode(context.Background(), &fs.MemRegularFile{
-				Data: contents,
-			}, fs.StableAttr{})
-			ino.AddChild(ent.Name, ch, true)
-		} else {
-			ch := ino.NewInode(context.Background(), &gitTreeInode{repo: g.repo, treeHash: ent.Hash}, fs.StableAttr{Mode: syscall.S_IFDIR})
-			ino.AddChild(ent.Name, ch, true)
-		}
-	}
-}
-
 type gitTreeInode struct {
 	fs.Inode
 
@@ -248,7 +194,21 @@ func main() {
 	opts.Debug = *debug
 	opts.DisableXAttrs = true
 
-	server, err := fs.Mount(flag.Arg(1), &gitFSRoot{repo: repo}, opts)
+	headRef, err := repo.Head()
+	if err != nil {
+		log.Fatal("Error locating HEAD")
+	}
+
+	headCommit, err := repo.CommitObject(headRef.Hash())
+	if err != nil {
+		log.Fatal("Error identifying head commit")
+	}
+	tree, err := headCommit.Tree()
+	if err != nil {
+		log.Fatal("Error locating head tree")
+	}
+
+	server, err := fs.Mount(flag.Arg(1), &gitTreeInode{repo: repo, treeHash: tree.Hash}, opts)
 	if err != nil {
 		log.Fatalf("Mount fail: %v\n", err)
 	}
