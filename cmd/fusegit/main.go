@@ -18,6 +18,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/config"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/filemode"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
@@ -120,13 +121,13 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 	}
 
 	if ent, ok := g.lookupIndex[name]; ok {
-		cacherObj := ent.Operations().(cacher)
+		// cacherObj := ent.Operations().(cacher)
 		if node, ok := ent.Operations().(fs.NodeGetattrer); ok {
 			var attrOut fuse.AttrOut
 			node.Getattr(ctx, nil, &attrOut)
 			out.Attr = attrOut.Attr
 		} else {
-			g.pref.Enqueue(cacherObj.cacheAttrs)
+			// g.pref.Enqueue(cacherObj.cacheAttrs)
 		}
 
 		// Caching Attr values that have not been produced by `Getattr` explicitly can be problematic.
@@ -342,8 +343,7 @@ func main() {
 	log.Println("Initiated clone")
 
 	repo, err := git.PlainClone(dir, true, &git.CloneOptions{
-		URL:   url,
-		Depth: 1,
+		URL: url,
 	})
 	if err != nil {
 		if err != git.ErrRepositoryAlreadyExists {
@@ -352,6 +352,13 @@ func main() {
 
 		repo, err = git.PlainOpen(dir)
 		if err != nil {
+			log.Fatal(err)
+		}
+
+		if err := repo.Fetch(&git.FetchOptions{
+			RemoteName: "origin",
+			RefSpecs:   []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
+		}); err != nil && err != git.NoErrAlreadyUpToDate {
 			log.Fatal(err)
 		}
 	}
@@ -369,15 +376,18 @@ func main() {
 	// TODO: Cancellation and waiting.
 	go pref.DoWork(context.Background())
 
-	headRef, err := repo.Head()
+	masterRef, err := repo.Reference("refs/remotes/origin/master", true)
 	if err != nil {
-		log.Fatal("Error locating HEAD")
+		log.Fatal("Error locating origin/master")
 	}
 
-	headCommit, err := repo.CommitObject(headRef.Hash())
+	log.Printf("Master ref %s", masterRef)
+
+	headCommit, err := repo.CommitObject(masterRef.Hash())
 	if err != nil {
 		log.Fatal("Error identifying head commit")
 	}
+
 	tree, err := headCommit.Tree()
 	if err != nil {
 		log.Fatal("Error locating head tree")
