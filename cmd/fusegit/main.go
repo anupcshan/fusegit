@@ -371,12 +371,14 @@ func main() {
 	opts.UID = uint32(os.Getuid())
 	opts.GID = uint32(os.Getgid())
 
-	pref := &prefetcher{
-		fncalls: make(chan func() error, 1000000),
-	}
-
-	// TODO: Cancellation and waiting.
-	go pref.DoWork(context.Background())
+	var pref *prefetcher
+	/*
+		pref := &prefetcher{
+			fncalls: make(chan func() error, 1000000),
+		}
+		// TODO: Cancellation and waiting.
+		go pref.DoWork(context.Background())
+	*/
 
 	masterRef, err := repo.Reference("refs/remotes/origin/master", true)
 	if err != nil {
