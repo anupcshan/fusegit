@@ -368,6 +368,8 @@ func main() {
 	opts := &fs.Options{}
 	opts.Debug = *debug
 	opts.DisableXAttrs = true
+	opts.UID = uint32(os.Getuid())
+	opts.GID = uint32(os.Getgid())
 
 	pref := &prefetcher{
 		fncalls: make(chan func() error, 1000000),
