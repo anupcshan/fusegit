@@ -19,6 +19,9 @@ import (
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 var (
@@ -160,18 +163,19 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 		return nil, syscall.EAGAIN
 	}
 
-	data, err := ioutil.ReadAll(r)
+	_, err = io.CopyN(ioutil.Discard, r, off)
 	if err != nil {
-		log.Println("Error reading file", err)
+		log.Println("Error skipping bytes", err)
 		return nil, syscall.EAGAIN
 	}
 
-	end := int(off) + len(dest)
-	if end > len(data) {
-		end = len(data)
+	n, err := r.Read(dest)
+	if err != nil && err != io.EOF {
+		log.Println("Error reading file", err, f.blobHash)
+		return nil, syscall.EAGAIN
 	}
 
-	return fuse.ReadResultData(data[off:end]), 0
+	return fuse.ReadResultData(dest[:n]), 0
 }
 
 func getCloneDir(url, mountPoint string) (string, error) {
@@ -247,6 +251,8 @@ func main() {
 	if err != nil {
 		log.Fatal("Error locating head tree")
 	}
+
+	go http.ListenAndServe(":6060", nil)
 
 	server, err := fs.Mount(mountPoint, &gitTreeInode{repo: repo, treeHash: tree.Hash}, opts)
 	if err != nil {
