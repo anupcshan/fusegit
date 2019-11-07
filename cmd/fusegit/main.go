@@ -25,12 +25,14 @@ var (
 type gitTreeInode struct {
 	fs.Inode
 
-	mu            sync.Mutex
-	repo          *git.Repository
-	treeHash      plumbing.Hash
+	mu       sync.Mutex
+	repo     *git.Repository
+	treeHash plumbing.Hash
+
 	cached        bool
 	cachedEntries []object.TreeEntry
-	lookupIndex   map[string]object.TreeEntry
+	lookupIndex   map[string]*fs.Inode
+	inodes        []*fs.Inode
 }
 
 func (g *gitTreeInode) scanTree() error {
@@ -51,9 +53,16 @@ func (g *gitTreeInode) scanTree() error {
 
 	g.cached = true
 	g.cachedEntries = tree.Entries
-	g.lookupIndex = make(map[string]object.TreeEntry, len(g.cachedEntries))
+	g.lookupIndex = make(map[string]*fs.Inode, len(tree.Entries))
 	for _, ent := range g.cachedEntries {
-		g.lookupIndex[ent.Name] = ent
+		var inode *fs.Inode
+		if ent.Mode.IsFile() {
+			inode = g.NewInode(context.Background(), &gitFile{repo: g.repo, blobHash: ent.Hash}, fs.StableAttr{})
+		} else {
+			inode = g.NewInode(context.Background(), &gitTreeInode{repo: g.repo, treeHash: ent.Hash}, fs.StableAttr{Mode: syscall.S_IFDIR})
+		}
+
+		g.lookupIndex[ent.Name] = inode
 	}
 
 	return nil
@@ -89,11 +98,7 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 	}
 
 	if ent, ok := g.lookupIndex[name]; ok {
-		if ent.Mode.IsFile() {
-			return g.NewInode(context.Background(), &gitFile{repo: g.repo, blobHash: ent.Hash}, fs.StableAttr{}), 0
-		} else {
-			return g.NewInode(context.Background(), &gitTreeInode{repo: g.repo, treeHash: ent.Hash}, fs.StableAttr{Mode: syscall.S_IFDIR}), 0
-		}
+		return ent, 0
 	}
 
 	return nil, syscall.ENOENT
