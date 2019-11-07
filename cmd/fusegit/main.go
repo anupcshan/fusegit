@@ -18,6 +18,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/filemode"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
 
 	"net/http"
@@ -62,7 +63,9 @@ func (g *gitTreeInode) scanTree() error {
 	g.lookupIndex = make(map[string]*fs.Inode, len(tree.Entries))
 	for _, ent := range g.cachedEntries {
 		var inode *fs.Inode
-		if ent.Mode.IsFile() {
+		if ent.Mode == filemode.Symlink {
+			inode = g.NewInode(context.Background(), &gitSymlink{repo: g.repo, blobHash: ent.Hash}, fs.StableAttr{Mode: uint32(ent.Mode)})
+		} else if ent.Mode.IsFile() {
 			inode = g.NewInode(context.Background(), &gitFile{repo: g.repo, blobHash: ent.Hash}, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else {
 			inode = g.NewInode(context.Background(), &gitTreeInode{repo: g.repo, treeHash: ent.Hash}, fs.StableAttr{Mode: syscall.S_IFDIR})
@@ -104,7 +107,6 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 	}
 
 	if ent, ok := g.lookupIndex[name]; ok {
-		out.SetAttrTimeout(2 * time.Hour)
 		out.SetEntryTimeout(2 * time.Hour)
 		return ent, 0
 	}
@@ -179,6 +181,67 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0
+}
+
+type gitSymlink struct {
+	fs.Inode
+
+	mu           sync.Mutex
+	repo         *git.Repository
+	blobHash     plumbing.Hash
+	cached       bool
+	cachedTarget []byte
+	cachedSize   int
+}
+
+var _ = (fs.NodeReadlinker)((*gitSymlink)(nil))
+
+func (f *gitSymlink) cacheAttrs() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.cached {
+		return nil
+	}
+
+	obj, err := f.repo.BlobObject(f.blobHash)
+	if err != nil {
+		log.Println("Error locating blob object")
+		return err
+	}
+
+	r, err := obj.Reader()
+	if err != nil {
+		log.Println("Error getting reader", err)
+		return err
+	}
+
+	f.cachedTarget, err = ioutil.ReadAll(r)
+	if err != nil && err != io.EOF {
+		log.Println("Error reading symlink", err)
+		return err
+	}
+
+	f.cached = true
+
+	return nil
+}
+
+func (f *gitSymlink) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	if f.cacheAttrs() != nil {
+		return syscall.EAGAIN
+	}
+	out.Attr.Size = uint64(len(f.cachedTarget))
+	out.SetTimeout(2 * time.Hour)
+	return 0
+}
+
+func (f *gitSymlink) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	if f.cacheAttrs() != nil {
+		return nil, syscall.EAGAIN
+	}
+
+	return f.cachedTarget, 0
 }
 
 func getCloneDir(url, mountPoint string) (string, error) {
