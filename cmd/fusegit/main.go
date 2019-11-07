@@ -104,6 +104,8 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 	}
 
 	if ent, ok := g.lookupIndex[name]; ok {
+		out.SetAttrTimeout(2 * time.Hour)
+		out.SetEntryTimeout(2 * time.Hour)
 		return ent, 0
 	}
 
@@ -149,6 +151,7 @@ func (f *gitFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrO
 		return syscall.EAGAIN
 	}
 	out.Attr.Size = uint64(f.cachedObj.Size)
+	out.SetTimeout(2 * time.Hour)
 	return 0
 }
 
