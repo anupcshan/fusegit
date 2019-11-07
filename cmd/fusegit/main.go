@@ -189,6 +189,7 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 	if f.cacheAttrs() != nil {
 		return nil, syscall.EAGAIN
 	}
+	defer printTimeSince("Reading file", time.Now())
 
 	r, err := f.cachedObj.Reader()
 	if err != nil {
