@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -29,6 +30,10 @@ var (
 	debug = flag.Bool("debug", false, "print debug data")
 )
 
+type cacher interface {
+	cacheAttrs() error
+}
+
 type gitTreeInode struct {
 	fs.Inode
 
@@ -36,13 +41,15 @@ type gitTreeInode struct {
 	repo     *git.Repository
 	treeHash plumbing.Hash
 
+	pref *prefetcher
+
 	cached        bool
 	cachedEntries []object.TreeEntry
 	lookupIndex   map[string]*fs.Inode
 	inodes        []*fs.Inode
 }
 
-func (g *gitTreeInode) scanTree() error {
+func (g *gitTreeInode) cacheAttrs() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -64,11 +71,17 @@ func (g *gitTreeInode) scanTree() error {
 	for _, ent := range g.cachedEntries {
 		var inode *fs.Inode
 		if ent.Mode == filemode.Symlink {
-			inode = g.NewInode(context.Background(), &gitSymlink{repo: g.repo, blobHash: ent.Hash}, fs.StableAttr{Mode: uint32(ent.Mode)})
+			symlink := &gitSymlink{repo: g.repo, blobHash: ent.Hash, pref: g.pref}
+			// g.pref.Enqueue(symlink.cacheAttrs)
+			inode = g.NewInode(context.Background(), symlink, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else if ent.Mode.IsFile() {
-			inode = g.NewInode(context.Background(), &gitFile{repo: g.repo, blobHash: ent.Hash}, fs.StableAttr{Mode: uint32(ent.Mode)})
+			file := &gitFile{repo: g.repo, blobHash: ent.Hash, pref: g.pref}
+			// g.pref.Enqueue(file.cacheAttrs)
+			inode = g.NewInode(context.Background(), file, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else {
-			inode = g.NewInode(context.Background(), &gitTreeInode{repo: g.repo, treeHash: ent.Hash}, fs.StableAttr{Mode: syscall.S_IFDIR})
+			dir := &gitTreeInode{repo: g.repo, treeHash: ent.Hash, pref: g.pref}
+			// g.pref.Enqueue(dir.cacheAttrs)
+			inode = g.NewInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		}
 
 		g.lookupIndex[ent.Name] = inode
@@ -86,7 +99,7 @@ func printTimeSince(action string, start time.Time) {
 func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	defer printTimeSince("Readdir", time.Now())
 
-	if err := g.scanTree(); err != nil {
+	if err := g.cacheAttrs(); err != nil {
 		return nil, syscall.EAGAIN
 	}
 
@@ -102,11 +115,24 @@ func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	defer printTimeSince("Lookup", time.Now())
 
-	if err := g.scanTree(); err != nil {
+	if err := g.cacheAttrs(); err != nil {
 		return nil, syscall.EAGAIN
 	}
 
 	if ent, ok := g.lookupIndex[name]; ok {
+		cacherObj := ent.Operations().(cacher)
+		if node, ok := ent.Operations().(fs.NodeGetattrer); ok {
+			var attrOut fuse.AttrOut
+			node.Getattr(ctx, nil, &attrOut)
+			out.Attr = attrOut.Attr
+		} else {
+			g.pref.Enqueue(cacherObj.cacheAttrs)
+		}
+
+		// Caching Attr values that have not been produced by `Getattr` explicitly can be problematic.
+		// Currently, we don't fetch `Attr` values for directories. If we see directory attr mismatches,
+		// move SetAttrTimeout below `node.Getattr` just above.
+		out.SetAttrTimeout(2 * time.Hour)
 		out.SetEntryTimeout(2 * time.Hour)
 		return ent, 0
 	}
@@ -116,6 +142,8 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 
 type gitFile struct {
 	fs.Inode
+
+	pref *prefetcher
 
 	mu        sync.Mutex
 	repo      *git.Repository
@@ -185,6 +213,8 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 
 type gitSymlink struct {
 	fs.Inode
+
+	pref *prefetcher
 
 	mu           sync.Mutex
 	repo         *git.Repository
@@ -265,6 +295,33 @@ func getCloneDir(url, mountPoint string) (string, error) {
 	return cloneDir, nil
 }
 
+type prefetcher struct {
+	fncalls chan func() error
+}
+
+func (f *prefetcher) Enqueue(call func() error) {
+	f.fncalls <- call
+}
+
+func (f *prefetcher) DoWork(ctx context.Context) {
+	var wg sync.WaitGroup
+	for i := 0; i < runtime.NumCPU(); i++ {
+		wg.Add(1)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					wg.Done()
+					return
+				case w := <-f.fncalls:
+					w()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func main() {
 	log.SetFlags(log.Lmicroseconds | log.Lshortfile)
 
@@ -304,6 +361,13 @@ func main() {
 	opts.Debug = *debug
 	opts.DisableXAttrs = true
 
+	pref := &prefetcher{
+		fncalls: make(chan func() error, 1000000),
+	}
+
+	// TODO: Cancellation and waiting.
+	go pref.DoWork(context.Background())
+
 	headRef, err := repo.Head()
 	if err != nil {
 		log.Fatal("Error locating HEAD")
@@ -320,7 +384,7 @@ func main() {
 
 	go http.ListenAndServe(":6060", nil)
 
-	server, err := fs.Mount(mountPoint, &gitTreeInode{repo: repo, treeHash: tree.Hash}, opts)
+	server, err := fs.Mount(mountPoint, &gitTreeInode{repo: repo, treeHash: tree.Hash, pref: pref}, opts)
 	if err != nil {
 		log.Fatalf("Mount fail: %v\n", err)
 	}
