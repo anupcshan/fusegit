@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"path"
 	"sync"
 	"syscall"
 	"time"
@@ -57,7 +60,7 @@ func (g *gitTreeInode) scanTree() error {
 	for _, ent := range g.cachedEntries {
 		var inode *fs.Inode
 		if ent.Mode.IsFile() {
-			inode = g.NewInode(context.Background(), &gitFile{repo: g.repo, blobHash: ent.Hash}, fs.StableAttr{})
+			inode = g.NewInode(context.Background(), &gitFile{repo: g.repo, blobHash: ent.Hash}, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else {
 			inode = g.NewInode(context.Background(), &gitTreeInode{repo: g.repo, treeHash: ent.Hash}, fs.StableAttr{Mode: syscall.S_IFDIR})
 		}
@@ -171,6 +174,27 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 	return fuse.ReadResultData(data[off:end]), 0
 }
 
+func getCloneDir(url, mountPoint string) (string, error) {
+	cleanMount := path.Clean(mountPoint)
+	hasher := sha256.New()
+	hasher.Write([]byte(cleanMount))
+	hasher.Write([]byte("\n"))
+	hasher.Write([]byte(url))
+	dirHash := hex.EncodeToString(hasher.Sum(nil))
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	cloneDir := path.Join(homeDir, ".cache", "fusegit", dirHash)
+	if err := os.MkdirAll(cloneDir, 0755); err != nil {
+		return "", err
+	}
+
+	return cloneDir, nil
+}
+
 func main() {
 	log.SetFlags(log.Lmicroseconds | log.Lshortfile)
 
@@ -178,7 +202,11 @@ func main() {
 	if len(flag.Args()) < 2 {
 		log.Fatalf("Usage:\n %s repo-url MOUNTPOINT", os.Args[0])
 	}
-	dir, err := ioutil.TempDir("", "clone-example")
+
+	url := flag.Arg(0)
+	mountPoint := flag.Arg(1)
+
+	dir, err := getCloneDir(url, mountPoint)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -186,11 +214,18 @@ func main() {
 	log.Println("Initiated clone")
 
 	repo, err := git.PlainClone(dir, true, &git.CloneOptions{
-		URL:   flag.Arg(0),
+		URL:   url,
 		Depth: 1,
 	})
 	if err != nil {
-		log.Fatal(err)
+		if err != git.ErrRepositoryAlreadyExists {
+			log.Fatal(err)
+		}
+
+		repo, err = git.PlainOpen(dir)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	log.Println("Completed clone")
@@ -213,11 +248,9 @@ func main() {
 		log.Fatal("Error locating head tree")
 	}
 
-	server, err := fs.Mount(flag.Arg(1), &gitTreeInode{repo: repo, treeHash: tree.Hash}, opts)
+	server, err := fs.Mount(mountPoint, &gitTreeInode{repo: repo, treeHash: tree.Hash}, opts)
 	if err != nil {
 		log.Fatalf("Mount fail: %v\n", err)
 	}
 	server.Wait()
-
-	_ = os.RemoveAll(dir)
 }
