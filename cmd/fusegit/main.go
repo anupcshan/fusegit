@@ -91,13 +91,13 @@ func (g *gitTreeInode) cacheAttrs() error {
 		var inode *fs.Inode
 		if ent.Mode == filemode.Symlink {
 			symlink := &gitSymlink{repo: g.repo, blobHash: ent.Hash}
-			inode = g.NewInode(context.Background(), symlink, fs.StableAttr{Mode: uint32(ent.Mode)})
+			inode = g.NewPersistentInode(context.Background(), symlink, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else if ent.Mode.IsFile() {
 			file := &gitFile{repo: g.repo, blobHash: ent.Hash}
-			inode = g.NewInode(context.Background(), file, fs.StableAttr{Mode: uint32(ent.Mode)})
+			inode = g.NewPersistentInode(context.Background(), file, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else {
 			dir := &gitTreeInode{repo: g.repo, treeHash: ent.Hash}
-			inode = g.NewInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
+			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		}
 
 		g.lookupIndex[ent.Name] = inode
