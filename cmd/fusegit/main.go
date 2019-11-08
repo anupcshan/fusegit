@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"path"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -51,6 +54,21 @@ type gitTreeInode struct {
 	cachedEntries []object.TreeEntry
 	lookupIndex   map[string]*fs.Inode
 	inodes        []*fs.Inode
+}
+
+func (g *gitTreeInode) updateHash(treeHash plumbing.Hash) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.cached {
+		for k := range g.lookupIndex {
+			g.NotifyEntry(k)
+		}
+	}
+
+	g.treeHash = treeHash
+	g.cached = false
+	g.RmAllChildren()
 }
 
 func (g *gitTreeInode) cacheAttrs() error {
@@ -401,9 +419,60 @@ func main() {
 		log.Fatal("Error locating head tree")
 	}
 
+	rootInode := &gitTreeInode{repo: repo, treeHash: tree.Hash, pref: pref}
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/checkout/") {
+			revision := plumbing.NewHash(strings.TrimPrefix(r.URL.Path, "/checkout/"))
+			commitObj, err := repo.CommitObject(revision)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "Unable to locate revision %s: %s", revision, err)
+				return
+			}
+			log.Println("Checking out", revision)
+			treeAtCommit, err := commitObj.Tree()
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, "Unable to fetch tree for revision %s: %s", revision, err)
+				return
+			}
+
+			rootInode.updateHash(treeAtCommit.Hash)
+			w.Write([]byte("OK"))
+		} else if strings.HasPrefix(r.URL.Path, "/commits/") {
+			log.Println("Listing recent commits")
+			commitIter, err := repo.Log(&git.LogOptions{From: masterRef.Hash()})
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, "Error obtaining iterator %v", err)
+				return
+			}
+
+			var commitShas []string
+			for counter := 0; counter < 20; counter++ {
+				commitObj, err := commitIter.Next()
+				if err != nil && err != io.EOF {
+					w.WriteHeader(http.StatusInternalServerError)
+					fmt.Fprintf(w, "Error iterating commits %v", err)
+					return
+				}
+				if err == io.EOF {
+					break
+				}
+				commitShas = append(commitShas, commitObj.Hash.String())
+			}
+			enc := json.NewEncoder(w)
+			enc.Encode(commitShas)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "Unknown command %s", r.URL.Path)
+		}
+	})
+
 	go http.ListenAndServe(":6060", nil)
 
-	server, err := fs.Mount(mountPoint, &gitTreeInode{repo: repo, treeHash: tree.Hash, pref: pref}, opts)
+	server, err := fs.Mount(mountPoint, rootInode, opts)
 	if err != nil {
 		log.Fatalf("Mount fail: %v\n", err)
 	}
