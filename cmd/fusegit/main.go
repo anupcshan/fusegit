@@ -382,6 +382,7 @@ func main() {
 				fmt.Fprintf(w, "Unable to locate revision %s: %s", revision, err)
 				return
 			}
+			headCommit = commitObj
 			log.Println("Checking out", revision)
 			treeAtCommit, err := commitObj.Tree()
 			if err != nil {
@@ -416,6 +417,9 @@ func main() {
 			}
 			enc := json.NewEncoder(w)
 			enc.Encode(commitShas)
+		} else if strings.HasPrefix(r.URL.Path, "/status/") {
+			log.Println("Current commit is", headCommit.Hash)
+			fmt.Fprint(w, headCommit.Hash)
 		} else {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, "Unknown command %s", r.URL.Path)
