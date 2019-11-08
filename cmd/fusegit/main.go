@@ -12,7 +12,6 @@ import (
 	"log"
 	"os"
 	"path"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -47,8 +46,6 @@ type gitTreeInode struct {
 	mu       sync.Mutex
 	repo     *git.Repository
 	treeHash plumbing.Hash
-
-	pref *prefetcher
 
 	cached        bool
 	cachedEntries []object.TreeEntry
@@ -93,16 +90,13 @@ func (g *gitTreeInode) cacheAttrs() error {
 	for _, ent := range g.cachedEntries {
 		var inode *fs.Inode
 		if ent.Mode == filemode.Symlink {
-			symlink := &gitSymlink{repo: g.repo, blobHash: ent.Hash, pref: g.pref}
-			// g.pref.Enqueue(symlink.cacheAttrs)
+			symlink := &gitSymlink{repo: g.repo, blobHash: ent.Hash}
 			inode = g.NewInode(context.Background(), symlink, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else if ent.Mode.IsFile() {
-			file := &gitFile{repo: g.repo, blobHash: ent.Hash, pref: g.pref}
-			// g.pref.Enqueue(file.cacheAttrs)
+			file := &gitFile{repo: g.repo, blobHash: ent.Hash}
 			inode = g.NewInode(context.Background(), file, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else {
-			dir := &gitTreeInode{repo: g.repo, treeHash: ent.Hash, pref: g.pref}
-			// g.pref.Enqueue(dir.cacheAttrs)
+			dir := &gitTreeInode{repo: g.repo, treeHash: ent.Hash}
 			inode = g.NewInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		}
 
@@ -147,8 +141,6 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 			var attrOut fuse.AttrOut
 			node.Getattr(ctx, nil, &attrOut)
 			out.Attr = attrOut.Attr
-		} else {
-			// g.pref.Enqueue(cacherObj.cacheAttrs)
 		}
 
 		// Caching Attr values that have not been produced by `Getattr` explicitly can be problematic.
@@ -164,8 +156,6 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 
 type gitFile struct {
 	fs.Inode
-
-	pref *prefetcher
 
 	mu        sync.Mutex
 	repo      *git.Repository
@@ -236,8 +226,6 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 
 type gitSymlink struct {
 	fs.Inode
-
-	pref *prefetcher
 
 	mu           sync.Mutex
 	repo         *git.Repository
@@ -318,33 +306,6 @@ func getCloneDir(url, mountPoint string) (string, error) {
 	return cloneDir, nil
 }
 
-type prefetcher struct {
-	fncalls chan func() error
-}
-
-func (f *prefetcher) Enqueue(call func() error) {
-	f.fncalls <- call
-}
-
-func (f *prefetcher) DoWork(ctx context.Context) {
-	var wg sync.WaitGroup
-	for i := 0; i < runtime.NumCPU(); i++ {
-		wg.Add(1)
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					wg.Done()
-					return
-				case w := <-f.fncalls:
-					w()
-				}
-			}
-		}()
-	}
-	wg.Wait()
-}
-
 func main() {
 	log.SetFlags(log.Lmicroseconds | log.Lshortfile)
 
@@ -393,15 +354,6 @@ func main() {
 	opts.UID = uint32(os.Getuid())
 	opts.GID = uint32(os.Getgid())
 
-	var pref *prefetcher
-	/*
-		pref := &prefetcher{
-			fncalls: make(chan func() error, 1000000),
-		}
-		// TODO: Cancellation and waiting.
-		go pref.DoWork(context.Background())
-	*/
-
 	masterRef, err := repo.Reference("refs/remotes/origin/master", true)
 	if err != nil {
 		log.Fatal("Error locating origin/master")
@@ -419,7 +371,7 @@ func main() {
 		log.Fatal("Error locating head tree")
 	}
 
-	rootInode := &gitTreeInode{repo: repo, treeHash: tree.Hash, pref: pref}
+	rootInode := &gitTreeInode{repo: repo, treeHash: tree.Hash}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/checkout/") {
