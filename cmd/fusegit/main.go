@@ -17,11 +17,14 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"gopkg.in/src-d/go-billy.v4/osfs"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/config"
 	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/cache"
 	"gopkg.in/src-d/go-git.v4/plumbing/filemode"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
+	"gopkg.in/src-d/go-git.v4/storage/filesystem"
 
 	"net/http"
 	_ "net/http/pprof"
@@ -342,7 +345,8 @@ func main() {
 
 	log.Println("Initiated clone")
 
-	repo, err := git.PlainClone(dir, true, &git.CloneOptions{
+	fsStorer := filesystem.NewStorage(osfs.New(dir), cache.NewObjectLRUDefault())
+	repo, err := git.Clone(fsStorer, nil, &git.CloneOptions{
 		URL: url,
 	})
 	if err != nil {
@@ -350,7 +354,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		repo, err = git.PlainOpen(dir)
+		repo, err = git.Open(fsStorer, nil)
 		if err != nil {
 			log.Fatal(err)
 		}
