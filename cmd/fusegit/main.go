@@ -157,12 +157,11 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 type gitFile struct {
 	fs.Inode
 
-	mu         sync.Mutex
-	repo       *git.Repository
-	blobHash   plumbing.Hash
-	cached     bool
-	cachedObj  *object.Blob
-	cachedData []byte
+	mu        sync.Mutex
+	repo      *git.Repository
+	blobHash  plumbing.Hash
+	cached    bool
+	cachedObj *object.Blob
 }
 
 func (f *gitFile) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -204,30 +203,25 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 	}
 	defer printTimeSince("Reading file", time.Now())
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if f.cachedData == nil {
-		r, err := f.cachedObj.Reader()
-		if err != nil {
-			log.Println("Error getting reader", err)
-			return nil, syscall.EAGAIN
-		}
-
-		data, err := ioutil.ReadAll(r)
-		if err != nil {
-			log.Println("Error reading file", err)
-			return nil, syscall.EAGAIN
-		}
-
-		f.cachedData = data
+	r, err := f.cachedObj.Reader()
+	if err != nil {
+		log.Println("Error getting reader", err)
+		return nil, syscall.EAGAIN
 	}
 
-	end := int(off) + len(dest)
-	if end > len(f.cachedData) {
-		end = len(f.cachedData)
+	_, err = io.CopyN(ioutil.Discard, r, off)
+	if err != nil {
+		log.Println("Error skipping bytes", err)
+		return nil, syscall.EAGAIN
 	}
-	return fuse.ReadResultData(f.cachedData[off:end]), 0
+
+	n, err := r.Read(dest)
+	if err != nil && err != io.EOF {
+		log.Println("Error reading file", err, f.blobHash)
+		return nil, syscall.EAGAIN
+	}
+
+	return fuse.ReadResultData(dest[:n]), 0
 }
 
 type gitSymlink struct {
