@@ -393,6 +393,17 @@ func main() {
 
 			rootInode.updateHash(treeAtCommit.Hash)
 			w.Write([]byte("OK\n"))
+		} else if strings.HasPrefix(r.URL.Path, "/fetch/") {
+			if err := repo.Fetch(&git.FetchOptions{
+				RemoteName: "origin",
+				RefSpecs:   []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
+			}); err != nil && err != git.NoErrAlreadyUpToDate {
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, "Unable to fetch: %s", err)
+				return
+			}
+
+			w.Write([]byte("OK\n"))
 		} else if strings.HasPrefix(r.URL.Path, "/commits/") {
 			log.Println("Listing recent commits")
 			commitIter, err := repo.Log(&git.LogOptions{From: masterRef.Hash()})

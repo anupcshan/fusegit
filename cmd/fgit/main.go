@@ -56,6 +56,16 @@ func main() {
 			fmt.Printf("Checkout to %s complete in %s\n", args[0], time.Since(start))
 			_ = resp.Body.Close()
 		},
+		"fetch": func(ctx context.Context, args []string) {
+			start := time.Now()
+			resp, err := http.Get(baseURL + "/fetch/")
+			if err != nil {
+				log.Printf("Unable to call fetch: %s", err)
+				return
+			}
+			fmt.Printf("Fetch complete in %s\n", time.Since(start))
+			_ = resp.Body.Close()
+		},
 	}
 
 	log.SetFlags(log.Lmicroseconds | log.Lshortfile)
