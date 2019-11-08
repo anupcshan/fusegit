@@ -392,7 +392,7 @@ func main() {
 			}
 
 			rootInode.updateHash(treeAtCommit.Hash)
-			w.Write([]byte("OK"))
+			w.Write([]byte("OK\n"))
 		} else if strings.HasPrefix(r.URL.Path, "/commits/") {
 			log.Println("Listing recent commits")
 			commitIter, err := repo.Log(&git.LogOptions{From: masterRef.Hash()})
@@ -419,7 +419,7 @@ func main() {
 			enc.Encode(commitShas)
 		} else if strings.HasPrefix(r.URL.Path, "/status/") {
 			log.Println("Current commit is", headCommit.Hash)
-			fmt.Fprint(w, headCommit.Hash)
+			fmt.Fprintf(w, "%s\n", headCommit.Hash)
 		} else {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, "Unknown command %s", r.URL.Path)
