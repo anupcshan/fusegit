@@ -1,0 +1,273 @@
+package fusegit
+
+import (
+	"context"
+	"io"
+	"io/ioutil"
+	"log"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hanwen/go-fuse/v2/fuse"
+	"gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/filemode"
+	"gopkg.in/src-d/go-git.v4/plumbing/object"
+)
+
+type gitTreeInode struct {
+	fs.Inode
+
+	mu       sync.Mutex
+	repo     *git.Repository
+	treeHash plumbing.Hash
+
+	cached        bool
+	cachedEntries []object.TreeEntry
+	lookupIndex   map[string]*fs.Inode
+	inodes        []*fs.Inode
+}
+
+func NewGitTreeInode(repo *git.Repository, treeHash plumbing.Hash) *gitTreeInode {
+	return &gitTreeInode{
+		repo:     repo,
+		treeHash: treeHash,
+	}
+}
+
+func (g *gitTreeInode) UpdateHash(treeHash plumbing.Hash) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.cached {
+		for k := range g.lookupIndex {
+			g.NotifyEntry(k)
+		}
+	}
+
+	g.treeHash = treeHash
+	g.cached = false
+	g.RmAllChildren()
+}
+
+func (g *gitTreeInode) cacheAttrs() error {
+	if g.cached {
+		return nil
+	}
+
+	defer printTimeSince("Scan Tree", time.Now())
+
+	tree, err := g.repo.TreeObject(g.treeHash)
+	if err != nil {
+		log.Printf("Error fetching tree object %s", g.treeHash)
+		return io.ErrUnexpectedEOF
+	}
+
+	g.cached = true
+	g.cachedEntries = tree.Entries
+	g.lookupIndex = make(map[string]*fs.Inode, len(tree.Entries))
+	for _, ent := range g.cachedEntries {
+		var inode *fs.Inode
+		if ent.Mode == filemode.Symlink {
+			symlink := &gitSymlink{repo: g.repo, blobHash: ent.Hash}
+			inode = g.NewPersistentInode(context.Background(), symlink, fs.StableAttr{Mode: uint32(ent.Mode)})
+		} else if ent.Mode.IsFile() {
+			file := &gitFile{repo: g.repo, blobHash: ent.Hash}
+			inode = g.NewPersistentInode(context.Background(), file, fs.StableAttr{Mode: uint32(ent.Mode)})
+		} else {
+			dir := &gitTreeInode{repo: g.repo, treeHash: ent.Hash}
+			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
+		}
+
+		g.lookupIndex[ent.Name] = inode
+	}
+
+	return nil
+}
+
+func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	defer printTimeSince("Readdir", time.Now())
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if err := g.cacheAttrs(); err != nil {
+		return nil, syscall.EAGAIN
+	}
+
+	result := make([]fuse.DirEntry, 0, len(g.cachedEntries))
+
+	for _, ent := range g.cachedEntries {
+		result = append(result, fuse.DirEntry{Name: ent.Name, Mode: uint32(ent.Mode)})
+	}
+
+	return fs.NewListDirStream(result), 0
+}
+
+func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	defer printTimeSince("Lookup", time.Now())
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if err := g.cacheAttrs(); err != nil {
+		return nil, syscall.EAGAIN
+	}
+
+	if ent, ok := g.lookupIndex[name]; ok {
+		// cacherObj := ent.Operations().(cacher)
+		if node, ok := ent.Operations().(fs.NodeGetattrer); ok {
+			var attrOut fuse.AttrOut
+			node.Getattr(ctx, nil, &attrOut)
+			out.Attr = attrOut.Attr
+		}
+
+		// Caching Attr values that have not been produced by `Getattr` explicitly can be problematic.
+		// Currently, we don't fetch `Attr` values for directories. If we see directory attr mismatches,
+		// move SetAttrTimeout below `node.Getattr` just above.
+		out.SetAttrTimeout(2 * time.Hour)
+		out.SetEntryTimeout(2 * time.Hour)
+		return ent, 0
+	}
+
+	return nil, syscall.ENOENT
+}
+
+type gitFile struct {
+	fs.Inode
+
+	mu        sync.Mutex
+	repo      *git.Repository
+	blobHash  plumbing.Hash
+	cached    bool
+	cachedObj *object.Blob
+}
+
+func (f *gitFile) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	return nil, fuse.FOPEN_KEEP_CACHE, 0
+}
+
+func (f *gitFile) cacheAttrs() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.cached {
+		return nil
+	}
+
+	obj, err := f.repo.BlobObject(f.blobHash)
+	if err != nil {
+		log.Println("Error locating blob object")
+		return err
+	}
+
+	f.cached = true
+	f.cachedObj = obj
+
+	return nil
+}
+
+func (f *gitFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	if f.cacheAttrs() != nil {
+		return syscall.EAGAIN
+	}
+	out.Attr.Size = uint64(f.cachedObj.Size)
+	out.SetTimeout(2 * time.Hour)
+	return 0
+}
+
+func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	if f.cacheAttrs() != nil {
+		return nil, syscall.EAGAIN
+	}
+	defer printTimeSince("Reading file", time.Now())
+
+	r, err := f.cachedObj.Reader()
+	if err != nil {
+		log.Println("Error getting reader", err)
+		return nil, syscall.EAGAIN
+	}
+
+	_, err = io.CopyN(ioutil.Discard, r, off)
+	if err != nil {
+		log.Println("Error skipping bytes", err)
+		return nil, syscall.EAGAIN
+	}
+
+	n, err := r.Read(dest)
+	if err != nil && err != io.EOF {
+		log.Println("Error reading file", err, f.blobHash)
+		return nil, syscall.EAGAIN
+	}
+
+	return fuse.ReadResultData(dest[:n]), 0
+}
+
+type gitSymlink struct {
+	fs.Inode
+
+	mu           sync.Mutex
+	repo         *git.Repository
+	blobHash     plumbing.Hash
+	cached       bool
+	cachedTarget []byte
+	cachedSize   int
+}
+
+var _ = (fs.NodeReadlinker)((*gitSymlink)(nil))
+
+func (f *gitSymlink) cacheAttrs() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.cached {
+		return nil
+	}
+
+	obj, err := f.repo.BlobObject(f.blobHash)
+	if err != nil {
+		log.Println("Error locating blob object")
+		return err
+	}
+
+	r, err := obj.Reader()
+	if err != nil {
+		log.Println("Error getting reader", err)
+		return err
+	}
+
+	f.cachedTarget, err = ioutil.ReadAll(r)
+	if err != nil && err != io.EOF {
+		log.Println("Error reading symlink", err)
+		return err
+	}
+
+	f.cached = true
+
+	return nil
+}
+
+func (f *gitSymlink) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	if f.cacheAttrs() != nil {
+		return syscall.EAGAIN
+	}
+	out.Attr.Size = uint64(len(f.cachedTarget))
+	out.SetTimeout(2 * time.Hour)
+	return 0
+}
+
+func (f *gitSymlink) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	if f.cacheAttrs() != nil {
+		return nil, syscall.EAGAIN
+	}
+
+	return f.cachedTarget, 0
+}
+
+func printTimeSince(action string, start time.Time) {
+	if false {
+		log.Printf("Completed %s in %s", action, time.Since(start))
+	}
+}
