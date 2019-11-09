@@ -86,13 +86,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		if err := repo.Fetch(&git.FetchOptions{
-			RemoteName: "origin",
-			RefSpecs:   []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
-		}); err != nil && err != git.NoErrAlreadyUpToDate {
-			log.Fatal(err)
-		}
 	}
 
 	log.Println("Completed clone")
