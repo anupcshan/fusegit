@@ -11,17 +11,17 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/filemode"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
+	"gopkg.in/src-d/go-git.v4/plumbing/storer"
 )
 
 type gitTreeInode struct {
 	fs.Inode
 
 	mu       sync.Mutex
-	repo     *git.Repository
+	storer   storer.Storer
 	treeHash plumbing.Hash
 
 	cached        bool
@@ -30,9 +30,9 @@ type gitTreeInode struct {
 	inodes        []*fs.Inode
 }
 
-func NewGitTreeInode(repo *git.Repository, treeHash plumbing.Hash) *gitTreeInode {
+func NewGitTreeInode(storer storer.Storer, treeHash plumbing.Hash) *gitTreeInode {
 	return &gitTreeInode{
-		repo:     repo,
+		storer:   storer,
 		treeHash: treeHash,
 	}
 }
@@ -59,7 +59,7 @@ func (g *gitTreeInode) cacheAttrs() error {
 
 	defer printTimeSince("Scan Tree", time.Now())
 
-	tree, err := g.repo.TreeObject(g.treeHash)
+	tree, err := object.GetTree(g.storer, g.treeHash)
 	if err != nil {
 		log.Printf("Error fetching tree object %s", g.treeHash)
 		return io.ErrUnexpectedEOF
@@ -71,13 +71,13 @@ func (g *gitTreeInode) cacheAttrs() error {
 	for _, ent := range g.cachedEntries {
 		var inode *fs.Inode
 		if ent.Mode == filemode.Symlink {
-			symlink := &gitSymlink{repo: g.repo, blobHash: ent.Hash}
+			symlink := &gitSymlink{storer: g.storer, blobHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), symlink, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else if ent.Mode.IsFile() {
-			file := &gitFile{repo: g.repo, blobHash: ent.Hash}
+			file := &gitFile{storer: g.storer, blobHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), file, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else {
-			dir := &gitTreeInode{repo: g.repo, treeHash: ent.Hash}
+			dir := &gitTreeInode{storer: g.storer, treeHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		}
 
@@ -139,7 +139,7 @@ type gitFile struct {
 	fs.Inode
 
 	mu        sync.Mutex
-	repo      *git.Repository
+	storer    storer.Storer
 	blobHash  plumbing.Hash
 	cached    bool
 	cachedObj *object.Blob
@@ -157,7 +157,7 @@ func (f *gitFile) cacheAttrs() error {
 		return nil
 	}
 
-	obj, err := f.repo.BlobObject(f.blobHash)
+	obj, err := object.GetBlob(f.storer, f.blobHash)
 	if err != nil {
 		log.Println("Error locating blob object")
 		return err
@@ -209,7 +209,7 @@ type gitSymlink struct {
 	fs.Inode
 
 	mu           sync.Mutex
-	repo         *git.Repository
+	storer       storer.Storer
 	blobHash     plumbing.Hash
 	cached       bool
 	cachedTarget []byte
@@ -226,7 +226,7 @@ func (f *gitSymlink) cacheAttrs() error {
 		return nil
 	}
 
-	obj, err := f.repo.BlobObject(f.blobHash)
+	obj, err := object.GetBlob(f.storer, f.blobHash)
 	if err != nil {
 		log.Println("Error locating blob object")
 		return err

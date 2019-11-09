@@ -120,7 +120,7 @@ func main() {
 		log.Fatal("Error locating head tree")
 	}
 
-	rootInode := fusegit.NewGitTreeInode(repo, tree.Hash)
+	rootInode := fusegit.NewGitTreeInode(repo.Storer, tree.Hash)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/checkout/") {
