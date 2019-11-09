@@ -17,6 +17,11 @@ import (
 	"gopkg.in/src-d/go-git.v4/plumbing/storer"
 )
 
+// Default time we want an entry to be cached in the kernel.
+// In ~ all cases so far, this number should be as high as we can possibly set. We should be
+// explicilty pushing invalidation notices to the kernel for entries when they change.
+const DefaultCacheTimeout = 300 * time.Hour
+
 type gitTreeInode struct {
 	fs.Inode
 
@@ -127,8 +132,8 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 		// Caching Attr values that have not been produced by `Getattr` explicitly can be problematic.
 		// Currently, we don't fetch `Attr` values for directories. If we see directory attr mismatches,
 		// move SetAttrTimeout below `node.Getattr` just above.
-		out.SetAttrTimeout(2 * time.Hour)
-		out.SetEntryTimeout(2 * time.Hour)
+		out.SetAttrTimeout(DefaultCacheTimeout)
+		out.SetEntryTimeout(DefaultCacheTimeout)
 		return ent, 0
 	}
 
@@ -174,7 +179,7 @@ func (f *gitFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrO
 		return syscall.EAGAIN
 	}
 	out.Attr.Size = uint64(f.cachedObj.Size)
-	out.SetTimeout(2 * time.Hour)
+	out.SetTimeout(DefaultCacheTimeout)
 	return 0
 }
 
@@ -254,7 +259,7 @@ func (f *gitSymlink) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.At
 		return syscall.EAGAIN
 	}
 	out.Attr.Size = uint64(len(f.cachedTarget))
-	out.SetTimeout(2 * time.Hour)
+	out.SetTimeout(DefaultCacheTimeout)
 	return 0
 }
 
