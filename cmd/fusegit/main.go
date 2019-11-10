@@ -30,10 +30,6 @@ var (
 	debug = flag.Bool("debug", false, "print debug data")
 )
 
-type cacher interface {
-	cacheAttrs() error
-}
-
 func getCloneDir(url, mountPoint string) (string, error) {
 	cleanMount := path.Clean(mountPoint)
 	hasher := sha256.New()

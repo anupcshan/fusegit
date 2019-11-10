@@ -122,7 +122,6 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 	}
 
 	if ent, ok := g.lookupIndex[name]; ok {
-		// cacherObj := ent.Operations().(cacher)
 		if node, ok := ent.Operations().(fs.NodeGetattrer); ok {
 			var attrOut fuse.AttrOut
 			node.Getattr(ctx, nil, &attrOut)
