@@ -10,8 +10,12 @@ import (
 	"log"
 	"os"
 	"path"
+	"sort"
 	"strings"
+	"text/tabwriter"
+	"time"
 
+	"github.com/hanwen/go-fuse/benchmark"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"gopkg.in/src-d/go-billy.v4/osfs"
 	"gopkg.in/src-d/go-git.v4"
@@ -27,7 +31,8 @@ import (
 )
 
 var (
-	debug = flag.Bool("debug", false, "print debug data")
+	debug          = flag.Bool("debug", false, "Print debug data")
+	printLatencies = flag.Duration("print-latencies", 0, "Print per-method latencies periodically")
 )
 
 func getCloneDir(url, mountPoint string) (string, error) {
@@ -57,6 +62,11 @@ func main() {
 	flag.Parse()
 	if len(flag.Args()) < 2 {
 		log.Fatalf("Usage:\n %s repo-url MOUNTPOINT", os.Args[0])
+	}
+
+	if *debug && *printLatencies > 0 {
+		log.Println("go-fuse crashes if latencymap and debug are both on at the same time. Disabling debug")
+		*debug = false
 	}
 
 	url := flag.Arg(0)
@@ -181,5 +191,29 @@ func main() {
 	if err != nil {
 		log.Fatalf("Mount fail: %v\n", err)
 	}
+
+	if *printLatencies > 0 {
+		latencyMap := benchmark.NewLatencyMap()
+		server.RecordLatencies(latencyMap)
+		go func() {
+			for {
+				time.Sleep(*printLatencies)
+				counts := latencyMap.Counts()
+				var keys []string
+				for k := range counts {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				w := tabwriter.NewWriter(os.Stderr, 0, 0, 1, ' ', tabwriter.AlignRight|tabwriter.Debug)
+				for _, k := range keys {
+					count, duration := latencyMap.Get(k)
+					fmt.Fprintf(w, "%s\t%d\t%v\t%d µs/call\n", k, count, duration, int(duration.Nanoseconds())/count/1000)
+				}
+				w.Flush()
+				fmt.Fprintln(os.Stderr)
+			}
+		}()
+	}
+
 	server.Wait()
 }
