@@ -14,7 +14,7 @@ import (
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/filemode"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
-	"gopkg.in/src-d/go-git.v4/plumbing/storer"
+	"gopkg.in/src-d/go-git.v4/storage"
 )
 
 // Default time we want an entry to be cached in the kernel.
@@ -26,7 +26,7 @@ type gitTreeInode struct {
 	fs.Inode
 
 	mu       sync.Mutex
-	storer   storer.Storer
+	storer   storage.Storer
 	treeHash plumbing.Hash
 
 	cached        bool
@@ -35,7 +35,7 @@ type gitTreeInode struct {
 	inodes        []*fs.Inode
 }
 
-func NewGitTreeInode(storer storer.Storer, treeHash plumbing.Hash) *gitTreeInode {
+func NewGitTreeInode(storer storage.Storer, treeHash plumbing.Hash) *gitTreeInode {
 	return &gitTreeInode{
 		storer:   storer,
 		treeHash: treeHash,
@@ -143,7 +143,7 @@ type gitFile struct {
 	fs.Inode
 
 	mu        sync.Mutex
-	storer    storer.Storer
+	storer    storage.Storer
 	blobHash  plumbing.Hash
 	cached    bool
 	cachedObj *object.Blob
@@ -223,7 +223,7 @@ type gitSymlink struct {
 	fs.Inode
 
 	mu           sync.Mutex
-	storer       storer.Storer
+	storer       storage.Storer
 	blobHash     plumbing.Hash
 	cached       bool
 	cachedTarget []byte
@@ -281,7 +281,7 @@ func (f *gitSymlink) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 }
 
 func printTimeSince(action string, start time.Time) {
-	if false {
+	if true {
 		log.Printf("Completed %s in %s", action, time.Since(start))
 	}
 }
