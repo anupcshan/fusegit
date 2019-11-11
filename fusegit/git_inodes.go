@@ -194,10 +194,20 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 		return nil, syscall.EAGAIN
 	}
 
-	_, err = io.CopyN(ioutil.Discard, r, off)
-	if err != nil {
-		log.Println("Error skipping bytes", err)
-		return nil, syscall.EAGAIN
+	if off > 0 {
+		if seeker, ok := r.(io.Seeker); ok {
+			_, err = seeker.Seek(off, io.SeekStart)
+			if err != nil {
+				log.Println("Error skipping bytes", err)
+				return nil, syscall.EAGAIN
+			}
+		} else {
+			_, err = io.CopyN(ioutil.Discard, r, off)
+			if err != nil {
+				log.Println("Error skipping bytes", err)
+				return nil, syscall.EAGAIN
+			}
+		}
 	}
 
 	n, err := r.Read(dest)
