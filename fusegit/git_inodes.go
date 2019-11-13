@@ -81,6 +81,9 @@ func (g *gitTreeInode) cacheAttrs() error {
 		} else if ent.Mode.IsFile() {
 			file := &gitFile{storer: g.storer, blobHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), file, fs.StableAttr{Mode: uint32(ent.Mode)})
+		} else if ent.Mode == filemode.Submodule {
+			dir := &gitTreeInode{storer: g.storer, treeHash: ent.Hash}
+			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		} else {
 			dir := &gitTreeInode{storer: g.storer, treeHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
@@ -105,7 +108,13 @@ func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 	result := make([]fuse.DirEntry, 0, len(g.cachedEntries))
 
 	for _, ent := range g.cachedEntries {
-		result = append(result, fuse.DirEntry{Name: ent.Name, Mode: uint32(ent.Mode)})
+		var mode uint32
+		if ent.Mode == filemode.Submodule {
+			mode = syscall.S_IFDIR
+		} else {
+			mode = uint32(ent.Mode)
+		}
+		result = append(result, fuse.DirEntry{Name: ent.Name, Mode: mode})
 	}
 
 	return fs.NewListDirStream(result), 0
