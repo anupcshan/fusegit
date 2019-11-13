@@ -281,7 +281,7 @@ func (f *gitSymlink) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 }
 
 func printTimeSince(action string, start time.Time) {
-	if true {
+	if false {
 		log.Printf("Completed %s in %s", action, time.Since(start))
 	}
 }
