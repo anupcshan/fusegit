@@ -49,6 +49,17 @@ How to run it
   21:48:28.109821 main.go:111: Completed clone
   21:48:28.109920 main.go:124: Master ref d9f6f3b6195a0ca35642561e530798ad1469bd41 refs/remotes/origin/master
 ```
+  At this point, `/mnt` will appear to have a readonly checkout of the repo at `master` commit. You
+can inspect it via a file manager or view files (as you would normally do). All write attempts will
+fail.
+
+  A bare .git directory corresponding to this repo is present in `~/.cache/fusegit/<opaque_checksum>`.
+This is preserved between mounts and speeds up subsequent mount operations. There is no "clone" step
+if the .git directory exists - it is immediately mounted - see `fgit` operations below to see how to
+perform "fetch".
+
+  Crash recovery handling while interacting with this .git directory is poor (non-existent). If you
+run into errors mounting, the best course of action is to `rm -r ~/.cache/fusegit` and start over.
 
 - Interact with mounted repo
 ```
