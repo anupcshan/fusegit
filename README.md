@@ -29,7 +29,7 @@ Status
 ======
 Super duper experimental and incomplete. Usage of this tool may result in harm to your pets.
 
-Currently, fusegit is controlled via an unsecured HTTP server on port 6060 (hardcoded for now). This means only a single fusegit mount can exist at a time. This also means anyone with network access to this machine can control it.
+Currently, fusegit is controlled via an unsecured HTTP server on port 6060 (hardcoded for now - can be encoded in a special node in the mounted directory in the future). This means only a single fusegit mount can exist at a time. This also means anyone with network access to this machine can control it.
 
 
 Aspirations
