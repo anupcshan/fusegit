@@ -3,8 +3,8 @@ module github.com/anupcshan/fusegit
 go 1.12
 
 require (
+	github.com/go-git/go-billy/v5 v5.0.0
+	github.com/go-git/go-git/v5 v5.0.0
 	github.com/hanwen/go-fuse/v2 v2.0.2
 	go.etcd.io/bbolt v1.3.3
-	gopkg.in/src-d/go-billy.v4 v4.3.2
-	gopkg.in/src-d/go-git.v4 v4.13.1
 )
