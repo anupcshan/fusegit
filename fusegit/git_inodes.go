@@ -115,7 +115,6 @@ func (g *gitTreeInode) cacheAttrs() error {
 	}
 
 	if g.isRoot {
-		log.Println("Really adding fusegitctl")
 		g.lookupIndex[CtlFile] = g.NewPersistentInode(
 			context.Background(), &fs.MemRegularFile{
 				Data: g.socketPath,
