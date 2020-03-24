@@ -6,18 +6,60 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"path"
+	"path/filepath"
 	"time"
+
+	"github.com/anupcshan/fusegit/fusegit"
 )
 
 const baseURL = "http://localhost:6060"
 
+func locateCtrlPath(originPath string) (string, error) {
+	if originPath == "" {
+		var err error
+		originPath, err = os.Getwd()
+		if err != nil {
+			return "", err
+		}
+	}
+
+	for {
+		fullPath := path.Join(originPath, fusegit.CtlFile)
+		if b, err := ioutil.ReadFile(fullPath); err == nil {
+			return string(b), nil
+		}
+
+		if originPath == "" || originPath == "/" {
+			return "", fmt.Errorf("Not a fusegit mount (or any of the parent directories)")
+		}
+
+		originPath = filepath.Dir(originPath)
+	}
+}
+
 func main() {
+	baseURL, err := locateCtrlPath("")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", baseURL)
+			},
+		},
+	}
+
 	commands := map[string]func(context.Context, []string){
 		"status": func(ctx context.Context, args []string) {
-			resp, err := http.Get(baseURL + "/status/")
+			resp, err := client.Get("http://unix/status/")
 			if err != nil {
 				log.Printf("Unable to read status: %s", err)
 				return
@@ -26,7 +68,7 @@ func main() {
 			io.Copy(os.Stdout, resp.Body)
 		},
 		"log": func(ctx context.Context, args []string) {
-			resp, err := http.Get(baseURL + "/commits/")
+			resp, err := client.Get("http://unix/commits/")
 			if err != nil {
 				log.Printf("Unable to read log: %s", err)
 				return
@@ -48,7 +90,7 @@ func main() {
 				log.Fatal("Required exactly one argument for checkout")
 			}
 			start := time.Now()
-			resp, err := http.Get(baseURL + "/checkout/" + args[0])
+			resp, err := client.Get("http://unix/checkout/" + args[0])
 			if err != nil {
 				log.Printf("Unable to call checkout: %s", err)
 				return
@@ -58,7 +100,7 @@ func main() {
 		},
 		"fetch": func(ctx context.Context, args []string) {
 			start := time.Now()
-			resp, err := http.Get(baseURL + "/fetch/")
+			resp, err := client.Get("http://unix/fetch/")
 			if err != nil {
 				log.Printf("Unable to call fetch: %s", err)
 				return
