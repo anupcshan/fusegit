@@ -29,7 +29,7 @@ Status
 ======
 Super duper experimental and incomplete. Usage of this tool may result in harm to your pets.
 
-Currently, fusegit is controlled via an unsecured HTTP server on port 6060 (hardcoded for now - can be encoded in a special node in the mounted directory in the future). This means only a single fusegit mount can exist at a time. This also means anyone with network access to this machine can control it.
+Each fusegit instance runs an HTTP server over a Unix socket. Path to the socket is encoded in ".fusegitctl" at the root of the repo mount. fgit autodetects this socket when executed inside the mounted directory.
 
 
 Aspirations
