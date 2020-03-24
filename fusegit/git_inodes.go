@@ -22,6 +22,8 @@ import (
 // explicilty pushing invalidation notices to the kernel for entries when they change.
 const DefaultCacheTimeout = 300 * time.Hour
 
+const CtlFile = ".fusegitctl"
+
 type gitTreeInode struct {
 	fs.Inode
 
@@ -29,16 +31,21 @@ type gitTreeInode struct {
 	storer   storage.Storer
 	treeHash plumbing.Hash
 
+	isRoot     bool
+	socketPath []byte
+
 	cached        bool
-	cachedEntries []object.TreeEntry
+	cachedEntries []fuse.DirEntry
 	lookupIndex   map[string]*fs.Inode
 	inodes        []*fs.Inode
 }
 
-func NewGitTreeInode(storer storage.Storer, treeHash plumbing.Hash) *gitTreeInode {
+func NewGitTreeInode(storer storage.Storer, treeHash plumbing.Hash, socketPath string) *gitTreeInode {
 	return &gitTreeInode{
-		storer:   storer,
-		treeHash: treeHash,
+		storer:     storer,
+		treeHash:   treeHash,
+		isRoot:     true,
+		socketPath: []byte(socketPath),
 	}
 }
 
@@ -70,10 +77,25 @@ func (g *gitTreeInode) cacheAttrs() error {
 		return io.ErrUnexpectedEOF
 	}
 
+	length := len(tree.Entries)
+	if g.isRoot {
+		// Allocate space for dummy entry
+		length++
+	}
+
 	g.cached = true
-	g.cachedEntries = tree.Entries
-	g.lookupIndex = make(map[string]*fs.Inode, len(tree.Entries))
-	for _, ent := range g.cachedEntries {
+	g.cachedEntries = make([]fuse.DirEntry, 0, length)
+	g.lookupIndex = make(map[string]*fs.Inode, length)
+
+	for _, ent := range tree.Entries {
+		var mode uint32
+		if ent.Mode == filemode.Submodule {
+			mode = syscall.S_IFDIR
+		} else {
+			mode = uint32(ent.Mode)
+		}
+		g.cachedEntries = append(g.cachedEntries, fuse.DirEntry{Name: ent.Name, Mode: mode})
+
 		var inode *fs.Inode
 		if ent.Mode == filemode.Symlink {
 			symlink := &gitSymlink{storer: g.storer, blobHash: ent.Hash}
@@ -92,6 +114,23 @@ func (g *gitTreeInode) cacheAttrs() error {
 		g.lookupIndex[ent.Name] = inode
 	}
 
+	if g.isRoot {
+		log.Println("Really adding fusegitctl")
+		g.lookupIndex[CtlFile] = g.NewPersistentInode(
+			context.Background(), &fs.MemRegularFile{
+				Data: g.socketPath,
+				Attr: fuse.Attr{
+					Mode: 0444,
+				},
+			},
+			fs.StableAttr{Mode: uint32(filemode.Regular)},
+		)
+		g.cachedEntries = append(g.cachedEntries, fuse.DirEntry{
+			Name: CtlFile,
+			Mode: uint32(filemode.Regular),
+		})
+	}
+
 	return nil
 }
 
@@ -105,19 +144,7 @@ func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 		return nil, syscall.EAGAIN
 	}
 
-	result := make([]fuse.DirEntry, 0, len(g.cachedEntries))
-
-	for _, ent := range g.cachedEntries {
-		var mode uint32
-		if ent.Mode == filemode.Submodule {
-			mode = syscall.S_IFDIR
-		} else {
-			mode = uint32(ent.Mode)
-		}
-		result = append(result, fuse.DirEntry{Name: ent.Name, Mode: mode})
-	}
-
-	return fs.NewListDirStream(result), 0
+	return fs.NewListDirStream(g.cachedEntries), 0
 }
 
 func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {

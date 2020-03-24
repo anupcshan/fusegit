@@ -49,7 +49,8 @@ func getCloneDir(url, mountPoint string) (string, error) {
 		return "", err
 	}
 
-	cloneDir := path.Join(homeDir, ".cache", "fusegit", dirHash)
+	cacheDir := path.Join(homeDir, ".cache", "fusegit")
+	cloneDir := path.Join(cacheDir, dirHash)
 	if err := os.MkdirAll(cloneDir, 0755); err != nil {
 		return "", err
 	}
@@ -133,7 +134,7 @@ func main() {
 		log.Fatal("Error locating head tree")
 	}
 
-	rootInode := fusegit.NewGitTreeInode(repo.Storer, tree.Hash)
+	rootInode := fusegit.NewGitTreeInode(repo.Storer, tree.Hash, "")
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/checkout/") {
