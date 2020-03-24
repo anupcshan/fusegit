@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"path"
 	"strings"
@@ -36,7 +37,7 @@ var (
 	useBolt = flag.Bool("use-bolt", false, "Use BoltDB to store git info instead of .git directory")
 )
 
-func getCloneDir(url, mountPoint string) (string, error) {
+func getRepoPaths(url, mountPoint string) (string, string, error) {
 	cleanMount := path.Clean(mountPoint)
 	hasher := sha256.New()
 	hasher.Write([]byte(cleanMount))
@@ -46,16 +47,16 @@ func getCloneDir(url, mountPoint string) (string, error) {
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	cacheDir := path.Join(homeDir, ".cache", "fusegit")
 	cloneDir := path.Join(cacheDir, dirHash)
 	if err := os.MkdirAll(cloneDir, 0755); err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return cloneDir, nil
+	return cloneDir, path.Join(cacheDir, dirHash+".socket"), nil
 }
 
 func main() {
@@ -69,7 +70,7 @@ func main() {
 	url := flag.Arg(0)
 	mountPoint := flag.Arg(1)
 
-	dir, err := getCloneDir(url, mountPoint)
+	dir, socketPath, err := getRepoPaths(url, mountPoint)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func main() {
 		log.Fatal("Error locating head tree")
 	}
 
-	rootInode := fusegit.NewGitTreeInode(repo.Storer, tree.Hash, "")
+	rootInode := fusegit.NewGitTreeInode(repo.Storer, tree.Hash, socketPath)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/checkout/") {
@@ -200,11 +201,17 @@ func main() {
 		}
 	})
 
-	go http.ListenAndServe(":6060", nil)
+	l, err := net.Listen("unix", socketPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go http.Serve(l, nil)
 
 	server, err := fs.Mount(mountPoint, rootInode, opts)
 	if err != nil {
 		log.Fatalf("Mount fail: %v\n", err)
 	}
 	server.Wait()
+	l.Close()
 }
