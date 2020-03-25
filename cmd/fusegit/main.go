@@ -18,8 +18,6 @@ import (
 
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
@@ -143,37 +141,7 @@ func main() {
 	rootInode := fusegit.NewGitTreeInode(repo.Storer, tree.Hash, socketPath)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/checkout/") {
-			revision := plumbing.NewHash(strings.TrimPrefix(r.URL.Path, "/checkout/"))
-			commitObj, err := repo.CommitObject(revision)
-			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprintf(w, "Unable to locate revision %s: %s", revision, err)
-				return
-			}
-			headCommit = commitObj
-			log.Println("Checking out", revision)
-			treeAtCommit, err := commitObj.Tree()
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, "Unable to fetch tree for revision %s: %s", revision, err)
-				return
-			}
-
-			rootInode.UpdateHash(treeAtCommit.Hash)
-			w.Write([]byte("OK\n"))
-		} else if strings.HasPrefix(r.URL.Path, "/fetch/") {
-			if err := repo.Fetch(&git.FetchOptions{
-				RemoteName: "origin",
-				RefSpecs:   []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
-			}); err != nil && err != git.NoErrAlreadyUpToDate {
-				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, "Unable to fetch: %s", err)
-				return
-			}
-
-			w.Write([]byte("OK\n"))
-		} else if strings.HasPrefix(r.URL.Path, "/commits/") {
+		if strings.HasPrefix(r.URL.Path, "/commits/") {
 			log.Println("Listing recent commits")
 			commitIter, err := repo.Log(&git.LogOptions{From: masterRef.Hash()})
 			if err != nil {
@@ -197,9 +165,6 @@ func main() {
 			}
 			enc := json.NewEncoder(w)
 			enc.Encode(commitShas)
-		} else if strings.HasPrefix(r.URL.Path, "/status/") {
-			log.Println("Current commit is", headCommit.Hash)
-			fmt.Fprintf(w, "%s\n", headCommit.Hash)
 		} else {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, "Unknown command %s", r.URL.Path)
