@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package fg_proto;
+
+service Fusegit {
+        rpc Checkout(CheckoutRequest) returns (CheckoutResponse) {}
+        rpc Fetch(FetchRequest) returns (FetchResponse) {}
+        rpc Status(StatusRequest) returns (StatusResponse) {}
+}
+
+message CheckoutRequest {
+        string revision_hash = 1;
+}
+
+message CheckoutResponse {
+}
+
+message FetchRequest {
+}
+
+message FetchResponse {
+}
+
+message StatusRequest {
+}
+
+message StatusResponse {
+        string revision_hash = 1;
+}
