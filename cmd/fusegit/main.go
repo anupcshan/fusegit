@@ -22,9 +22,12 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/hanwen/go-fuse/v2/fs"
+	"google.golang.org/grpc"
 
 	"github.com/anupcshan/fusegit/boltstorage"
+	"github.com/anupcshan/fusegit/fg_proto"
 	"github.com/anupcshan/fusegit/fusegit"
+	"github.com/anupcshan/fusegit/processor"
 
 	bolt "go.etcd.io/bbolt"
 
@@ -206,7 +209,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	go http.Serve(l, nil)
+	s := grpc.NewServer()
+	fg_proto.RegisterFusegitServer(
+		s,
+		processor.NewFusegitProcessor(headCommit, repo, rootInode),
+	)
+
+	go func() {
+		s.Serve(l)
+	}()
 
 	server, err := fs.Mount(mountPoint, rootInode, opts)
 	if err != nil {

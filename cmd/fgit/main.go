@@ -2,20 +2,19 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"time"
 
+	"github.com/anupcshan/fusegit/fg_proto"
 	"github.com/anupcshan/fusegit/fusegit"
+	"google.golang.org/grpc"
 )
 
 const baseURL = "http://localhost:6060"
@@ -43,70 +42,80 @@ func locateCtrlPath(originPath string) (string, error) {
 	}
 }
 
+func UnixDialer(addr string, t time.Duration) (net.Conn, error) {
+	unix_addr, err := net.ResolveUnixAddr("unix", addr)
+	conn, err := net.DialUnix("unix", nil, unix_addr)
+	return conn, err
+}
+
 func main() {
+	flag.Parse()
+
 	baseURL, err := locateCtrlPath("")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", baseURL)
-			},
-		},
+	conn, err := grpc.Dial(baseURL, grpc.WithInsecure(), grpc.WithDialer(UnixDialer))
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	client := fg_proto.NewFusegitClient(conn)
 
 	commands := map[string]func(context.Context, []string){
 		"status": func(ctx context.Context, args []string) {
-			resp, err := client.Get("http://unix/status/")
+			resp, err := client.Status(ctx, &fg_proto.StatusRequest{})
 			if err != nil {
 				log.Printf("Unable to read status: %s", err)
 				return
 			}
 
-			io.Copy(os.Stdout, resp.Body)
+			fmt.Println(resp.GetRevisionHash())
 		},
-		"log": func(ctx context.Context, args []string) {
-			resp, err := client.Get("http://unix/commits/")
-			if err != nil {
-				log.Printf("Unable to read log: %s", err)
-				return
-			}
+		/*
+			"log": func(ctx context.Context, args []string) {
+				resp, err := client.Get("http://unix/commits/")
+				if err != nil {
+					log.Printf("Unable to read log: %s", err)
+					return
+				}
 
-			var commits []string
-			decoder := json.NewDecoder(resp.Body)
-			if err := decoder.Decode(&commits); err != nil {
-				log.Printf("Unable to decode list of commits: %s", err)
-				return
-			}
+				var commits []string
+				decoder := json.NewDecoder(resp.Body)
+				if err := decoder.Decode(&commits); err != nil {
+					log.Printf("Unable to decode list of commits: %s", err)
+					return
+				}
 
-			for _, c := range commits {
-				fmt.Println(c)
-			}
-		},
+				for _, c := range commits {
+					fmt.Println(c)
+				}
+			},
+		*/
 		"checkout": func(ctx context.Context, args []string) {
 			if len(args) != 1 {
 				log.Fatal("Required exactly one argument for checkout")
 			}
 			start := time.Now()
-			resp, err := client.Get("http://unix/checkout/" + args[0])
+			_, err := client.Checkout(ctx, &fg_proto.CheckoutRequest{
+				RevisionHash: args[0],
+			})
+
 			if err != nil {
 				log.Printf("Unable to call checkout: %s", err)
 				return
 			}
 			fmt.Printf("Checkout to %s complete in %s\n", args[0], time.Since(start))
-			_ = resp.Body.Close()
 		},
 		"fetch": func(ctx context.Context, args []string) {
 			start := time.Now()
-			resp, err := client.Get("http://unix/fetch/")
+			_, err := client.Fetch(ctx, &fg_proto.FetchRequest{})
 			if err != nil {
 				log.Printf("Unable to call fetch: %s", err)
 				return
 			}
 			fmt.Printf("Fetch complete in %s\n", time.Since(start))
-			_ = resp.Body.Close()
 		},
 	}
 
