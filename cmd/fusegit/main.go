@@ -1,5 +1,7 @@
 package main
 
+//go:generate protoc -I ../../fg_proto ../../fg_proto/fusegit.proto --go_out=plugins=grpc:../../fg_proto
+
 import (
 	"crypto/sha256"
 	"encoding/hex"
