@@ -156,6 +156,76 @@ func (m *FetchResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_FetchResponse proto.InternalMessageInfo
 
+type LogRequest struct {
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *LogRequest) Reset()         { *m = LogRequest{} }
+func (m *LogRequest) String() string { return proto.CompactTextString(m) }
+func (*LogRequest) ProtoMessage()    {}
+func (*LogRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_47e6e4b3212236eb, []int{4}
+}
+
+func (m *LogRequest) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_LogRequest.Unmarshal(m, b)
+}
+func (m *LogRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_LogRequest.Marshal(b, m, deterministic)
+}
+func (m *LogRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_LogRequest.Merge(m, src)
+}
+func (m *LogRequest) XXX_Size() int {
+	return xxx_messageInfo_LogRequest.Size(m)
+}
+func (m *LogRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_LogRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_LogRequest proto.InternalMessageInfo
+
+type LogResponse struct {
+	RevisionHashes       []string `protobuf:"bytes,1,rep,name=revision_hashes,json=revisionHashes,proto3" json:"revision_hashes,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *LogResponse) Reset()         { *m = LogResponse{} }
+func (m *LogResponse) String() string { return proto.CompactTextString(m) }
+func (*LogResponse) ProtoMessage()    {}
+func (*LogResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_47e6e4b3212236eb, []int{5}
+}
+
+func (m *LogResponse) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_LogResponse.Unmarshal(m, b)
+}
+func (m *LogResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_LogResponse.Marshal(b, m, deterministic)
+}
+func (m *LogResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_LogResponse.Merge(m, src)
+}
+func (m *LogResponse) XXX_Size() int {
+	return xxx_messageInfo_LogResponse.Size(m)
+}
+func (m *LogResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_LogResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_LogResponse proto.InternalMessageInfo
+
+func (m *LogResponse) GetRevisionHashes() []string {
+	if m != nil {
+		return m.RevisionHashes
+	}
+	return nil
+}
+
 type StatusRequest struct {
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
@@ -166,7 +236,7 @@ func (m *StatusRequest) Reset()         { *m = StatusRequest{} }
 func (m *StatusRequest) String() string { return proto.CompactTextString(m) }
 func (*StatusRequest) ProtoMessage()    {}
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_47e6e4b3212236eb, []int{4}
+	return fileDescriptor_47e6e4b3212236eb, []int{6}
 }
 
 func (m *StatusRequest) XXX_Unmarshal(b []byte) error {
@@ -198,7 +268,7 @@ func (m *StatusResponse) Reset()         { *m = StatusResponse{} }
 func (m *StatusResponse) String() string { return proto.CompactTextString(m) }
 func (*StatusResponse) ProtoMessage()    {}
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_47e6e4b3212236eb, []int{5}
+	return fileDescriptor_47e6e4b3212236eb, []int{7}
 }
 
 func (m *StatusResponse) XXX_Unmarshal(b []byte) error {
@@ -231,6 +301,8 @@ func init() {
 	proto.RegisterType((*CheckoutResponse)(nil), "fg_proto.CheckoutResponse")
 	proto.RegisterType((*FetchRequest)(nil), "fg_proto.FetchRequest")
 	proto.RegisterType((*FetchResponse)(nil), "fg_proto.FetchResponse")
+	proto.RegisterType((*LogRequest)(nil), "fg_proto.LogRequest")
+	proto.RegisterType((*LogResponse)(nil), "fg_proto.LogResponse")
 	proto.RegisterType((*StatusRequest)(nil), "fg_proto.StatusRequest")
 	proto.RegisterType((*StatusResponse)(nil), "fg_proto.StatusResponse")
 }
@@ -240,21 +312,24 @@ func init() {
 }
 
 var fileDescriptor_47e6e4b3212236eb = []byte{
-	// 218 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xe2, 0x4d, 0x2b, 0x2d, 0x4e,
-	0x4d, 0xcf, 0x2c, 0xd1, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0xe2, 0x48, 0x4b, 0x8f, 0x07, 0xb3,
-	0x94, 0xcc, 0xb8, 0xf8, 0x9d, 0x33, 0x52, 0x93, 0xb3, 0xf3, 0x4b, 0x4b, 0x82, 0x52, 0x0b, 0x4b,
-	0x53, 0x8b, 0x4b, 0x84, 0x94, 0xb9, 0x78, 0x8b, 0x52, 0xcb, 0x32, 0x8b, 0x33, 0xf3, 0xf3, 0xe2,
-	0x33, 0x12, 0x8b, 0x33, 0x24, 0x18, 0x15, 0x18, 0x35, 0x38, 0x83, 0x78, 0x60, 0x82, 0x1e, 0x89,
-	0xc5, 0x19, 0x4a, 0x42, 0x5c, 0x02, 0x08, 0x7d, 0xc5, 0x05, 0xf9, 0x79, 0xc5, 0xa9, 0x4a, 0x7c,
-	0x5c, 0x3c, 0x6e, 0xa9, 0x25, 0xc9, 0x19, 0x50, 0x83, 0x94, 0xf8, 0xb9, 0x78, 0xa1, 0x7c, 0xa8,
-	0x02, 0x7e, 0x2e, 0xde, 0xe0, 0x92, 0xc4, 0x92, 0xd2, 0x62, 0x98, 0x0a, 0x53, 0x2e, 0x3e, 0x98,
-	0x00, 0x44, 0x09, 0x51, 0x96, 0x1b, 0x9d, 0x64, 0xe4, 0x62, 0x77, 0x83, 0x78, 0x48, 0xc8, 0x99,
-	0x8b, 0x03, 0xe6, 0x10, 0x21, 0x49, 0x3d, 0x98, 0xbf, 0xf4, 0xd0, 0x3c, 0x25, 0x25, 0x85, 0x4d,
-	0x0a, 0xea, 0x2c, 0x06, 0x21, 0x2b, 0x2e, 0x56, 0xb0, 0x4b, 0x85, 0xc4, 0x10, 0xca, 0x90, 0xbd,
-	0x22, 0x25, 0x8e, 0x21, 0x0e, 0xd7, 0x6b, 0xcb, 0xc5, 0x06, 0xf1, 0x83, 0x10, 0x92, 0x22, 0x14,
-	0x6f, 0x4a, 0x49, 0x60, 0x4a, 0xc0, 0xb4, 0x27, 0xb1, 0x81, 0xc5, 0x8d, 0x01, 0x01, 0x00, 0x00,
-	0xff, 0xff, 0x89, 0x3b, 0x4c, 0x60, 0xa2, 0x01, 0x00, 0x00,
+	// 266 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x50, 0x4b, 0x4f, 0xc2, 0x40,
+	0x10, 0xb6, 0x21, 0x22, 0x8c, 0x7d, 0x98, 0x89, 0x8f, 0xba, 0x27, 0x52, 0x0f, 0x72, 0xea, 0xc1,
+	0x07, 0x07, 0x13, 0x4f, 0x24, 0xc4, 0x03, 0xa7, 0xfa, 0x03, 0x48, 0x25, 0x43, 0xb7, 0x31, 0x61,
+	0x91, 0xd9, 0xfa, 0xf7, 0x35, 0xb6, 0xbb, 0x6c, 0xa1, 0x1e, 0xb8, 0xed, 0x7e, 0xaf, 0xc9, 0xf7,
+	0x41, 0xb0, 0xaa, 0x98, 0x8a, 0x52, 0xa7, 0x9b, 0xad, 0xd2, 0x0a, 0x07, 0xab, 0x62, 0x51, 0xbf,
+	0x92, 0x09, 0x44, 0x53, 0x49, 0xcb, 0x4f, 0x55, 0xe9, 0x8c, 0xbe, 0x2a, 0x62, 0x8d, 0x77, 0x10,
+	0x6c, 0xe9, 0xbb, 0xe4, 0x52, 0xad, 0x17, 0x32, 0x67, 0x19, 0x7b, 0x23, 0x6f, 0x3c, 0xcc, 0x7c,
+	0x0b, 0xbe, 0xe5, 0x2c, 0x13, 0x84, 0x0b, 0xe7, 0xe3, 0x8d, 0x5a, 0x33, 0x25, 0x21, 0xf8, 0x33,
+	0xd2, 0x4b, 0x69, 0x82, 0x92, 0x08, 0x02, 0xf3, 0x37, 0x02, 0x1f, 0x60, 0xae, 0x0a, 0x4b, 0x4f,
+	0xe0, 0xbc, 0xfe, 0x35, 0x24, 0xde, 0x43, 0xb4, 0x77, 0x96, 0x38, 0xf6, 0x46, 0xbd, 0xf1, 0x30,
+	0x0b, 0xdb, 0x87, 0x89, 0xff, 0x62, 0xdf, 0x75, 0xae, 0x2b, 0xb6, 0x41, 0xcf, 0x10, 0x5a, 0xc0,
+	0x64, 0x1d, 0x53, 0xe1, 0xe1, 0xc7, 0x83, 0xb3, 0x59, 0x33, 0x0b, 0x4e, 0x61, 0x60, 0xeb, 0xe0,
+	0x6d, 0x6a, 0xd7, 0x49, 0x0f, 0xa6, 0x11, 0xe2, 0x3f, 0xca, 0x94, 0x3b, 0xc1, 0x17, 0x38, 0xad,
+	0xfb, 0xe2, 0xb5, 0x93, 0xb5, 0x07, 0x11, 0x37, 0x1d, 0x7c, 0xe7, 0x7d, 0x82, 0xde, 0x5c, 0x15,
+	0x78, 0xe9, 0x14, 0x6e, 0x29, 0x71, 0x75, 0x80, 0xee, 0x5c, 0xaf, 0xd0, 0x6f, 0x9a, 0x63, 0x2b,
+	0x7a, 0x6f, 0x1c, 0x11, 0x77, 0x09, 0x6b, 0xff, 0xe8, 0xd7, 0xf8, 0xe3, 0x6f, 0x00, 0x00, 0x00,
+	0xff, 0xff, 0x7c, 0xf0, 0x68, 0x8d, 0x1e, 0x02, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -271,6 +346,7 @@ const _ = grpc.SupportPackageIsVersion6
 type FusegitClient interface {
 	Checkout(ctx context.Context, in *CheckoutRequest, opts ...grpc.CallOption) (*CheckoutResponse, error)
 	Fetch(ctx context.Context, in *FetchRequest, opts ...grpc.CallOption) (*FetchResponse, error)
+	Log(ctx context.Context, in *LogRequest, opts ...grpc.CallOption) (*LogResponse, error)
 	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
 }
 
@@ -300,6 +376,15 @@ func (c *fusegitClient) Fetch(ctx context.Context, in *FetchRequest, opts ...grp
 	return out, nil
 }
 
+func (c *fusegitClient) Log(ctx context.Context, in *LogRequest, opts ...grpc.CallOption) (*LogResponse, error) {
+	out := new(LogResponse)
+	err := c.cc.Invoke(ctx, "/fg_proto.Fusegit/Log", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *fusegitClient) Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error) {
 	out := new(StatusResponse)
 	err := c.cc.Invoke(ctx, "/fg_proto.Fusegit/Status", in, out, opts...)
@@ -313,6 +398,7 @@ func (c *fusegitClient) Status(ctx context.Context, in *StatusRequest, opts ...g
 type FusegitServer interface {
 	Checkout(context.Context, *CheckoutRequest) (*CheckoutResponse, error)
 	Fetch(context.Context, *FetchRequest) (*FetchResponse, error)
+	Log(context.Context, *LogRequest) (*LogResponse, error)
 	Status(context.Context, *StatusRequest) (*StatusResponse, error)
 }
 
@@ -325,6 +411,9 @@ func (*UnimplementedFusegitServer) Checkout(ctx context.Context, req *CheckoutRe
 }
 func (*UnimplementedFusegitServer) Fetch(ctx context.Context, req *FetchRequest) (*FetchResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Fetch not implemented")
+}
+func (*UnimplementedFusegitServer) Log(ctx context.Context, req *LogRequest) (*LogResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Log not implemented")
 }
 func (*UnimplementedFusegitServer) Status(ctx context.Context, req *StatusRequest) (*StatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
@@ -370,6 +459,24 @@ func _Fusegit_Fetch_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Fusegit_Log_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LogRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FusegitServer).Log(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/fg_proto.Fusegit/Log",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FusegitServer).Log(ctx, req.(*LogRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Fusegit_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StatusRequest)
 	if err := dec(in); err != nil {
@@ -399,6 +506,10 @@ var _Fusegit_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Fetch",
 			Handler:    _Fusegit_Fetch_Handler,
+		},
+		{
+			MethodName: "Log",
+			Handler:    _Fusegit_Log_Handler,
 		},
 		{
 			MethodName: "Status",

@@ -5,15 +5,11 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"flag"
-	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
 	"path"
-	"strings"
 	"time"
 
 	"github.com/go-git/go-billy/v5/osfs"
@@ -30,9 +26,6 @@ import (
 	"github.com/anupcshan/fusegit/processor"
 
 	bolt "go.etcd.io/bbolt"
-
-	"net/http"
-	_ "net/http/pprof"
 )
 
 var (
@@ -139,37 +132,6 @@ func main() {
 	}
 
 	rootInode := fusegit.NewGitTreeInode(repo.Storer, tree.Hash, socketPath)
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/commits/") {
-			log.Println("Listing recent commits")
-			commitIter, err := repo.Log(&git.LogOptions{From: masterRef.Hash()})
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprintf(w, "Error obtaining iterator %v", err)
-				return
-			}
-
-			var commitShas []string
-			for counter := 0; counter < 20; counter++ {
-				commitObj, err := commitIter.Next()
-				if err != nil && err != io.EOF {
-					w.WriteHeader(http.StatusInternalServerError)
-					fmt.Fprintf(w, "Error iterating commits %v", err)
-					return
-				}
-				if err == io.EOF {
-					break
-				}
-				commitShas = append(commitShas, commitObj.Hash.String())
-			}
-			enc := json.NewEncoder(w)
-			enc.Encode(commitShas)
-		} else {
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, "Unknown command %s", r.URL.Path)
-		}
-	})
 
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {

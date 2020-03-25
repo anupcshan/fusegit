@@ -73,26 +73,17 @@ func main() {
 
 			fmt.Println(resp.GetRevisionHash())
 		},
-		/*
-			"log": func(ctx context.Context, args []string) {
-				resp, err := client.Get("http://unix/commits/")
-				if err != nil {
-					log.Printf("Unable to read log: %s", err)
-					return
-				}
+		"log": func(ctx context.Context, args []string) {
+			resp, err := client.Log(ctx, &fg_proto.LogRequest{})
+			if err != nil {
+				log.Printf("Unable to read log: %s", err)
+				return
+			}
 
-				var commits []string
-				decoder := json.NewDecoder(resp.Body)
-				if err := decoder.Decode(&commits); err != nil {
-					log.Printf("Unable to decode list of commits: %s", err)
-					return
-				}
-
-				for _, c := range commits {
-					fmt.Println(c)
-				}
-			},
-		*/
+			for _, c := range resp.GetRevisionHashes() {
+				fmt.Println(c)
+			}
+		},
 		"checkout": func(ctx context.Context, args []string) {
 			if len(args) != 1 {
 				log.Fatal("Required exactly one argument for checkout")

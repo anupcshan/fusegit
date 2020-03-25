@@ -5,6 +5,7 @@ package fg_proto;
 service Fusegit {
         rpc Checkout(CheckoutRequest) returns (CheckoutResponse) {}
         rpc Fetch(FetchRequest) returns (FetchResponse) {}
+        rpc Log(LogRequest) returns (LogResponse) {}
         rpc Status(StatusRequest) returns (StatusResponse) {}
 }
 
@@ -19,6 +20,13 @@ message FetchRequest {
 }
 
 message FetchResponse {
+}
+
+message LogRequest {
+}
+
+message LogResponse {
+        repeated string revision_hashes = 1;
 }
 
 message StatusRequest {

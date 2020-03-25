@@ -2,6 +2,7 @@ package processor
 
 import (
 	"context"
+	"io"
 	"log"
 	"sync"
 
@@ -59,6 +60,34 @@ func (f *fusegitProcessor) Fetch(_ context.Context, _ *fg_proto.FetchRequest) (*
 	}
 
 	return &fg_proto.FetchResponse{}, nil
+}
+
+func (f *fusegitProcessor) Log(_ context.Context, _ *fg_proto.LogRequest) (*fg_proto.LogResponse, error) {
+	log.Println("Listing recent commits")
+
+	f.lock.Lock()
+	commitIter, err := f.repo.Log(&git.LogOptions{From: f.head.Hash})
+	f.lock.Unlock()
+
+	if err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "Error obtaining iterator: %s", err)
+	}
+
+	var commitShas []string
+	for counter := 0; counter < 20; counter++ {
+		commitObj, err := commitIter.Next()
+		if err != nil && err != io.EOF {
+			return nil, status.Errorf(codes.FailedPrecondition, "Error iterating commits: %s", err)
+		}
+		if err == io.EOF {
+			break
+		}
+		commitShas = append(commitShas, commitObj.Hash.String())
+	}
+
+	return &fg_proto.LogResponse{
+		RevisionHashes: commitShas,
+	}, nil
 }
 
 func (f *fusegitProcessor) Status(_ context.Context, _ *fg_proto.StatusRequest) (*fg_proto.StatusResponse, error) {
