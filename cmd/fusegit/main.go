@@ -26,6 +26,9 @@ import (
 	"github.com/anupcshan/fusegit/processor"
 
 	bolt "go.etcd.io/bbolt"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 var (
@@ -61,6 +64,13 @@ func main() {
 	flag.Parse()
 	if len(flag.Args()) < 2 {
 		log.Fatalf("Usage:\n %s repo-url MOUNTPOINT", os.Args[0])
+	}
+
+	if *debug {
+		go func() {
+			// Run a pprof instance in debug mode
+			http.ListenAndServe(":6060", nil)
+		}()
 	}
 
 	url := flag.Arg(0)
