@@ -31,8 +31,9 @@ type gitTreeInode struct {
 	storer   storage.Storer
 	treeHash plumbing.Hash
 
-	isRoot     bool
-	socketPath []byte
+	initialized bool
+	isRoot      bool
+	socketPath  []byte
 
 	cached        bool
 	cachedEntries []fuse.DirEntry
@@ -40,10 +41,9 @@ type gitTreeInode struct {
 	inodes        []*fs.Inode
 }
 
-func NewGitTreeInode(storer storage.Storer, treeHash plumbing.Hash, socketPath string) *gitTreeInode {
+func NewGitTreeInode(storer storage.Storer, socketPath string) *gitTreeInode {
 	return &gitTreeInode{
 		storer:     storer,
-		treeHash:   treeHash,
 		isRoot:     true,
 		socketPath: []byte(socketPath),
 	}
@@ -61,7 +61,10 @@ func (g *gitTreeInode) UpdateHash(treeHash plumbing.Hash) {
 
 	g.treeHash = treeHash
 	g.cached = false
-	g.RmAllChildren()
+	if g.initialized {
+		g.RmAllChildren()
+	}
+	g.initialized = true
 }
 
 func (g *gitTreeInode) cacheAttrs() error {

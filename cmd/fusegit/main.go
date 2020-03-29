@@ -124,35 +124,20 @@ func main() {
 	opts.UID = uint32(os.Getuid())
 	opts.GID = uint32(os.Getgid())
 
-	masterRef, err := repo.Reference("refs/remotes/origin/master", true)
-	if err != nil {
-		log.Fatal("Error locating origin/master")
-	}
-
-	log.Printf("Master ref %s", masterRef)
-
-	headCommit, err := repo.CommitObject(masterRef.Hash())
-	if err != nil {
-		log.Fatal("Error identifying head commit")
-	}
-
-	tree, err := headCommit.Tree()
-	if err != nil {
-		log.Fatal("Error locating head tree")
-	}
-
-	rootInode := fusegit.NewGitTreeInode(repo.Storer, tree.Hash, socketPath)
+	rootInode := fusegit.NewGitTreeInode(repo.Storer, socketPath)
 
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	proc, err := processor.NewFusegitProcessor(repo, rootInode)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	s := grpc.NewServer()
-	fg_proto.RegisterFusegitServer(
-		s,
-		processor.NewFusegitProcessor(headCommit, repo, rootInode),
-	)
+	fg_proto.RegisterFusegitServer(s, proc)
 
 	go func() {
 		s.Serve(l)

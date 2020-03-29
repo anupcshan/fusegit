@@ -99,10 +99,29 @@ func (f *fusegitProcessor) Status(_ context.Context, _ *fg_proto.StatusRequest) 
 	}, nil
 }
 
-func NewFusegitProcessor(head *object.Commit, repo *git.Repository, root updater) fg_proto.FusegitServer {
+func NewFusegitProcessor(repo *git.Repository, root updater) (fg_proto.FusegitServer, error) {
+	masterRef, err := repo.Reference("refs/remotes/origin/master", true)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("Master ref %s", masterRef)
+
+	headCommit, err := repo.CommitObject(masterRef.Hash())
+	if err != nil {
+		return nil, err
+	}
+
+	tree, err := headCommit.Tree()
+	if err != nil {
+		return nil, err
+	}
+
+	root.UpdateHash(tree.Hash)
+
 	return &fusegitProcessor{
-		head: head,
+		head: headCommit,
 		repo: repo,
 		root: root,
-	}
+	}, nil
 }
