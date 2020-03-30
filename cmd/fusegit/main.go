@@ -124,7 +124,7 @@ func main() {
 	opts.UID = uint32(os.Getuid())
 	opts.GID = uint32(os.Getgid())
 
-	rootInode := fusegit.NewGitTreeInode(repo.Storer, socketPath)
+	rootInode := fusegit.NewGitTreeInode(repo, socketPath)
 
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {
