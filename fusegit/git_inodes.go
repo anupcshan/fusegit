@@ -47,10 +47,10 @@ type gitTreeInode struct {
 
 	isInitializedInOverlay bool
 
-	cached        bool
-	cachedEntries []fuse.DirEntry
-	lookupIndex   map[string]*fs.Inode
-	inodes        []*fs.Inode
+	cached       bool
+	readdirCache []fuse.DirEntry
+	lookupIndex  map[string]*fs.Inode
+	inodes       []*fs.Inode
 }
 
 func NewGitTreeInode(repo repository, socketPath string, overlayRoot string) *gitTreeInode {
@@ -102,7 +102,7 @@ func (g *gitTreeInode) cacheAttrs() error {
 	}
 
 	g.cached = true
-	g.cachedEntries = make([]fuse.DirEntry, 0, length)
+	g.readdirCache = make([]fuse.DirEntry, 0, length)
 	g.lookupIndex = make(map[string]*fs.Inode, length)
 
 	for _, ent := range tree.Entries {
@@ -112,7 +112,7 @@ func (g *gitTreeInode) cacheAttrs() error {
 		} else {
 			mode = uint32(ent.Mode)
 		}
-		g.cachedEntries = append(g.cachedEntries, fuse.DirEntry{Name: ent.Name, Mode: mode})
+		g.readdirCache = append(g.readdirCache, fuse.DirEntry{Name: ent.Name, Mode: mode})
 
 		var inode *fs.Inode
 		if ent.Mode == filemode.Symlink {
@@ -141,7 +141,7 @@ func (g *gitTreeInode) cacheAttrs() error {
 			},
 			fs.StableAttr{Mode: uint32(filemode.Regular)},
 		)
-		g.cachedEntries = append(g.cachedEntries, fuse.DirEntry{
+		g.readdirCache = append(g.readdirCache, fuse.DirEntry{
 			Name: CtlFile,
 			Mode: uint32(filemode.Regular),
 		})
@@ -160,7 +160,7 @@ func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 		return nil, syscall.EAGAIN
 	}
 
-	return fs.NewListDirStream(g.cachedEntries), 0
+	return fs.NewListDirStream(g.readdirCache), 0
 }
 
 func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -253,7 +253,7 @@ func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mo
 	ch := g.NewPersistentInode(ctx, of, fs.StableAttr{Mode: st.Mode, Ino: st.Ino})
 
 	g.lookupIndex[name] = ch
-	g.cachedEntries = append(g.cachedEntries, fuse.DirEntry{Name: name, Mode: mode})
+	g.readdirCache = append(g.readdirCache, fuse.DirEntry{Name: name, Mode: mode})
 
 	return ch, fh, 0, 0
 }
