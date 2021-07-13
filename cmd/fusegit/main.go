@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path"
-	"time"
 
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5"
@@ -20,20 +19,16 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"google.golang.org/grpc"
 
-	"github.com/anupcshan/fusegit/boltstorage"
 	"github.com/anupcshan/fusegit/fg_proto"
 	"github.com/anupcshan/fusegit/fusegit"
 	"github.com/anupcshan/fusegit/processor"
-
-	bolt "go.etcd.io/bbolt"
 
 	"net/http"
 	_ "net/http/pprof"
 )
 
 var (
-	debug   = flag.Bool("debug", false, "print debug data")
-	useBolt = flag.Bool("use-bolt", false, "Use BoltDB to store git info instead of .git directory")
+	debug = flag.Bool("debug", false, "print debug data")
 )
 
 func getRepoPaths(url, mountPoint string) (string, string, string, error) {
@@ -89,23 +84,7 @@ func main() {
 	log.Println("Initiated clone")
 
 	var fsStorer storage.Storer
-	if !*useBolt {
-		fsStorer = filesystem.NewStorage(osfs.New(dir), cache.NewObjectLRUDefault())
-	} else {
-		db, err := bolt.Open(path.Join(dir, "git.db"), 0600, &bolt.Options{
-			Timeout: 2 * time.Second,
-			NoSync:  true,
-		})
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer db.Close()
-
-		fsStorer, err = boltstorage.NewBoltStorage(db)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
+	fsStorer = filesystem.NewStorage(osfs.New(dir), cache.NewObjectLRUDefault())
 
 	repo, err := git.Clone(fsStorer, nil, &git.CloneOptions{
 		URL: url,
