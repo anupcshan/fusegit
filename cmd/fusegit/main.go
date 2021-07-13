@@ -36,7 +36,7 @@ var (
 	useBolt = flag.Bool("use-bolt", false, "Use BoltDB to store git info instead of .git directory")
 )
 
-func getRepoPaths(url, mountPoint string) (string, string, error) {
+func getRepoPaths(url, mountPoint string) (string, string, string, error) {
 	cleanMount := path.Clean(mountPoint)
 	hasher := sha256.New()
 	hasher.Write([]byte(cleanMount))
@@ -46,16 +46,21 @@ func getRepoPaths(url, mountPoint string) (string, string, error) {
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
-	cacheDir := path.Join(homeDir, ".cache", "fusegit")
-	cloneDir := path.Join(cacheDir, dirHash)
+	cacheDir := path.Join(homeDir, ".cache", "fusegit", dirHash)
+	cloneDir := path.Join(cacheDir, "git")
 	if err := os.MkdirAll(cloneDir, 0755); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
-	return cloneDir, path.Join(cacheDir, dirHash+".socket"), nil
+	overlayDir := path.Join(cacheDir, "write-overlay")
+	if err := os.MkdirAll(overlayDir, 0755); err != nil {
+		return "", "", "", err
+	}
+
+	return cloneDir, path.Join(cacheDir, "socket"), overlayDir, nil
 }
 
 func main() {
@@ -76,7 +81,7 @@ func main() {
 	url := flag.Arg(0)
 	mountPoint := flag.Arg(1)
 
-	dir, socketPath, err := getRepoPaths(url, mountPoint)
+	dir, socketPath, overlayRoot, err := getRepoPaths(url, mountPoint)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -124,7 +129,7 @@ func main() {
 	opts.UID = uint32(os.Getuid())
 	opts.GID = uint32(os.Getgid())
 
-	rootInode := fusegit.NewGitTreeInode(repo, socketPath)
+	rootInode := fusegit.NewGitTreeInode(repo, socketPath, overlayRoot)
 
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {

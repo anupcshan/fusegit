@@ -28,16 +28,21 @@ type repository interface {
 	TreeObject(h plumbing.Hash) (*object.Tree, error)
 }
 
+type gitTreeContext struct {
+	overlayRoot string
+	repo        repository
+	socketPath  []byte
+}
+
 type gitTreeInode struct {
 	fs.Inode
 
 	mu       sync.Mutex
-	repo     repository
 	treeHash plumbing.Hash
+	treeCtx  *gitTreeContext
 
 	initialized bool
 	isRoot      bool
-	socketPath  []byte
 
 	cached        bool
 	cachedEntries []fuse.DirEntry
@@ -45,11 +50,14 @@ type gitTreeInode struct {
 	inodes        []*fs.Inode
 }
 
-func NewGitTreeInode(repo repository, socketPath string) *gitTreeInode {
+func NewGitTreeInode(repo repository, socketPath string, overlayRoot string) *gitTreeInode {
 	return &gitTreeInode{
-		repo:       repo,
-		isRoot:     true,
-		socketPath: []byte(socketPath),
+		isRoot: true,
+		treeCtx: &gitTreeContext{
+			overlayRoot: overlayRoot,
+			repo:        repo,
+			socketPath:  []byte(socketPath),
+		},
 	}
 }
 
@@ -78,7 +86,7 @@ func (g *gitTreeInode) cacheAttrs() error {
 
 	defer printTimeSince("Scan Tree", time.Now())
 
-	tree, err := g.repo.TreeObject(g.treeHash)
+	tree, err := g.treeCtx.repo.TreeObject(g.treeHash)
 	if err != nil {
 		log.Printf("Error fetching tree object %s", g.treeHash)
 		return io.ErrUnexpectedEOF
@@ -105,16 +113,16 @@ func (g *gitTreeInode) cacheAttrs() error {
 
 		var inode *fs.Inode
 		if ent.Mode == filemode.Symlink {
-			symlink := &gitSymlink{repo: g.repo, blobHash: ent.Hash}
+			symlink := &gitSymlink{treeCtx: g.treeCtx, blobHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), symlink, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else if ent.Mode.IsFile() {
-			file := &gitFile{repo: g.repo, blobHash: ent.Hash}
+			file := &gitFile{treeCtx: g.treeCtx, blobHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), file, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else if ent.Mode == filemode.Submodule {
-			dir := &gitTreeInode{repo: g.repo, treeHash: ent.Hash}
+			dir := &gitTreeInode{treeCtx: g.treeCtx, treeHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		} else {
-			dir := &gitTreeInode{repo: g.repo, treeHash: ent.Hash}
+			dir := &gitTreeInode{treeCtx: g.treeCtx, treeHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		}
 
@@ -124,7 +132,7 @@ func (g *gitTreeInode) cacheAttrs() error {
 	if g.isRoot {
 		g.lookupIndex[CtlFile] = g.NewPersistentInode(
 			context.Background(), &fs.MemRegularFile{
-				Data: g.socketPath,
+				Data: g.treeCtx.socketPath,
 				Attr: fuse.Attr{
 					Mode: 0444,
 				},
@@ -185,7 +193,7 @@ type gitFile struct {
 	fs.Inode
 
 	mu        sync.Mutex
-	repo      repository
+	treeCtx   *gitTreeContext
 	blobHash  plumbing.Hash
 	cached    bool
 	cachedObj *object.Blob
@@ -203,7 +211,7 @@ func (f *gitFile) cacheAttrs() error {
 		return nil
 	}
 
-	obj, err := f.repo.BlobObject(f.blobHash)
+	obj, err := f.treeCtx.repo.BlobObject(f.blobHash)
 	if err != nil {
 		log.Println("Error locating blob object")
 		return err
@@ -265,7 +273,7 @@ type gitSymlink struct {
 	fs.Inode
 
 	mu           sync.Mutex
-	repo         repository
+	treeCtx      *gitTreeContext
 	blobHash     plumbing.Hash
 	cached       bool
 	cachedTarget []byte
@@ -282,7 +290,7 @@ func (f *gitSymlink) cacheAttrs() error {
 		return nil
 	}
 
-	obj, err := f.repo.BlobObject(f.blobHash)
+	obj, err := f.treeCtx.repo.BlobObject(f.blobHash)
 	if err != nil {
 		log.Println("Error locating blob object")
 		return err
