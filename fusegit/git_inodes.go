@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -43,6 +44,8 @@ type gitTreeInode struct {
 
 	initialized bool
 	isRoot      bool
+
+	isInitializedInOverlay bool
 
 	cached        bool
 	cachedEntries []fuse.DirEntry
@@ -125,7 +128,6 @@ func (g *gitTreeInode) cacheAttrs() error {
 			dir := &gitTreeInode{treeCtx: g.treeCtx, treeHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		}
-
 		g.lookupIndex[ent.Name] = inode
 	}
 
@@ -187,6 +189,85 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 	}
 
 	return nil, syscall.ENOENT
+}
+
+// Must be called with lock held.
+func (g *gitTreeInode) replicateTreeInOverlay() error {
+	if g.isInitializedInOverlay {
+		// Already replicated. Nothing to do.
+		return nil
+	}
+
+	if g.isRoot {
+		// Top-level overlay directory guaranteed to exist. Nothing to do.
+		return nil
+	}
+
+	parentName, parentInode := g.Parent()
+	parentTreeInode := parentInode.Operations().(*gitTreeInode)
+
+	if err := parentTreeInode.replicateTreeInOverlay(); err != nil {
+		return err
+	}
+
+	log.Println("Creating parent dir", parentName, parentTreeInode)
+	if err := syscall.Mkdir(filepath.Join(g.treeCtx.overlayRoot, g.Path(nil)), 0775); err != nil {
+		log.Println("Error creating dir", err)
+		return err
+	}
+
+	g.isInitializedInOverlay = true
+
+	return nil
+}
+
+func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (node *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	fullRelativePath := filepath.Join(g.Path(nil), name)
+	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+
+	if err := g.replicateTreeInOverlay(); err != nil {
+		return nil, nil, 0, err.(syscall.Errno)
+	}
+
+	fd, err := syscall.Creat(fullOverlayPath, mode)
+
+	if err != nil {
+		log.Println("Creating overlay file failed", err)
+		return nil, nil, 0, err.(syscall.Errno)
+	}
+
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
+		syscall.Close(fd)
+		syscall.Unlink(fullOverlayPath)
+		return nil, nil, 0, err.(syscall.Errno)
+	}
+	out.FromStat(&st)
+
+	fh = fs.NewLoopbackFile(fd)
+
+	of := &overlayFile{treeCtx: g.treeCtx, relativePath: fullRelativePath, fileHandle: fh}
+	ch := g.NewPersistentInode(ctx, of, fs.StableAttr{Mode: st.Mode, Ino: st.Ino})
+
+	g.lookupIndex[name] = ch
+	g.cachedEntries = append(g.cachedEntries, fuse.DirEntry{Name: name, Mode: mode})
+
+	return ch, fh, 0, 0
+}
+
+type overlayFile struct {
+	fs.Inode
+
+	treeCtx      *gitTreeContext
+	relativePath string
+	fileHandle   fs.FileHandle
+}
+
+func (g *overlayFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+	return g.fileHandle.(fs.FileSetattrer).Setattr(ctx, in, out)
 }
 
 type gitFile struct {
