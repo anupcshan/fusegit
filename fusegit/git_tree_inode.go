@@ -80,6 +80,16 @@ func (g *gitTreeInode) scanOverlay() error {
 			mode := uint32(dirent.Type())
 			ch := g.NewPersistentInode(context.Background(), of, fs.StableAttr{Mode: mode})
 			g.inodeCache.Upsert(dirent.Name(), mode, ch)
+		} else if dirent.Type() == os.ModeSymlink {
+			of := &overlaySymlink{treeCtx: g.treeCtx, relativePath: filepath.Join(g.Path(nil), dirent.Name())}
+			fInfo, err := dirent.Info()
+			if err != nil {
+				// TODO: Maybe don't fail here. This is recoverable.
+				return err
+			}
+			mode := uint32(fInfo.Mode().Perm() | syscall.S_IFLNK)
+			ch := g.NewPersistentInode(context.Background(), of, fs.StableAttr{Mode: mode})
+			g.inodeCache.Upsert(dirent.Name(), mode, ch)
 		}
 	}
 
@@ -260,4 +270,30 @@ func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mo
 	fh = fs.NewLoopbackFile(fd)
 
 	return ch, fh, 0, 0
+}
+
+func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	fullRelativePath := filepath.Join(g.Path(nil), name)
+	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+
+	log.Printf("About to create symlink from %s to %s", target, fullOverlayPath)
+
+	if err := syscall.Symlink(target, fullOverlayPath); err != nil {
+		return nil, err.(syscall.Errno)
+	}
+
+	var st syscall.Stat_t
+	if err := syscall.Lstat(fullOverlayPath, &st); err != nil {
+		syscall.Unlink(fullOverlayPath)
+		return nil, err.(syscall.Errno)
+	}
+	out.FromStat(&st)
+
+	log.Printf("%x", st.Mode)
+
+	of := &overlaySymlink{treeCtx: g.treeCtx, relativePath: fullRelativePath}
+	ch := g.NewPersistentInode(ctx, of, fs.StableAttr{Mode: st.Mode})
+	g.inodeCache.Upsert(name, st.Mode, ch)
+
+	return ch, 0
 }
