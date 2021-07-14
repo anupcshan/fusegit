@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -47,10 +48,9 @@ type gitTreeInode struct {
 
 	isInitializedInOverlay bool
 
-	cached       bool
-	readdirCache []fuse.DirEntry
-	lookupIndex  map[string]*fs.Inode
-	inodes       []*fs.Inode
+	cached     bool
+	inodeCache *inodeIndex
+	inodes     []*fs.Inode
 }
 
 func NewGitTreeInode(repo repository, socketPath string, overlayRoot string) *gitTreeInode {
@@ -69,8 +69,8 @@ func (g *gitTreeInode) UpdateHash(treeHash plumbing.Hash) {
 	defer g.mu.Unlock()
 
 	if g.cached {
-		for k := range g.lookupIndex {
-			g.NotifyEntry(k)
+		for _, k := range g.inodeCache.Dirents() {
+			g.NotifyEntry(k.Name)
 		}
 	}
 
@@ -82,11 +82,25 @@ func (g *gitTreeInode) UpdateHash(treeHash plumbing.Hash) {
 	g.initialized = true
 }
 
-func (g *gitTreeInode) cacheAttrs() error {
-	if g.cached {
-		return nil
+func (g *gitTreeInode) scanOverlay() error {
+	overlayPath := filepath.Join(g.treeCtx.overlayRoot, g.Path(nil))
+	dirents, err := os.ReadDir(overlayPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
 	}
 
+	for _, dirent := range dirents {
+		if dirent.Type().IsRegular() {
+		}
+	}
+
+	return nil
+}
+
+func (g *gitTreeInode) scanTree() error {
 	defer printTimeSince("Scan Tree", time.Now())
 
 	tree, err := g.treeCtx.repo.TreeObject(g.treeHash)
@@ -95,15 +109,7 @@ func (g *gitTreeInode) cacheAttrs() error {
 		return io.ErrUnexpectedEOF
 	}
 
-	length := len(tree.Entries)
-	if g.isRoot {
-		// Allocate space for dummy entry
-		length++
-	}
-
-	g.cached = true
-	g.readdirCache = make([]fuse.DirEntry, 0, length)
-	g.lookupIndex = make(map[string]*fs.Inode, length)
+	g.inodeCache = NewInodeCache()
 
 	for _, ent := range tree.Entries {
 		var mode uint32
@@ -112,7 +118,6 @@ func (g *gitTreeInode) cacheAttrs() error {
 		} else {
 			mode = uint32(ent.Mode)
 		}
-		g.readdirCache = append(g.readdirCache, fuse.DirEntry{Name: ent.Name, Mode: mode})
 
 		var inode *fs.Inode
 		if ent.Mode == filemode.Symlink {
@@ -128,25 +133,40 @@ func (g *gitTreeInode) cacheAttrs() error {
 			dir := &gitTreeInode{treeCtx: g.treeCtx, treeHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		}
-		g.lookupIndex[ent.Name] = inode
+		g.inodeCache.Upsert(ent.Name, mode, inode)
+	}
+
+	return nil
+}
+
+func (g *gitTreeInode) cacheAttrs() error {
+	if g.cached {
+		return nil
+	}
+
+	if err := g.scanTree(); err != nil {
+		return err
+	}
+
+	if err := g.scanOverlay(); err != nil {
+		return err
 	}
 
 	if g.isRoot {
-		g.lookupIndex[CtlFile] = g.NewPersistentInode(
-			context.Background(), &fs.MemRegularFile{
-				Data: g.treeCtx.socketPath,
-				Attr: fuse.Attr{
-					Mode: 0444,
+		g.inodeCache.Upsert(CtlFile, uint32(filemode.Regular),
+			g.NewPersistentInode(
+				context.Background(), &fs.MemRegularFile{
+					Data: g.treeCtx.socketPath,
+					Attr: fuse.Attr{
+						Mode: 0444,
+					},
 				},
-			},
-			fs.StableAttr{Mode: uint32(filemode.Regular)},
+				fs.StableAttr{Mode: uint32(filemode.Regular)},
+			),
 		)
-		g.readdirCache = append(g.readdirCache, fuse.DirEntry{
-			Name: CtlFile,
-			Mode: uint32(filemode.Regular),
-		})
 	}
 
+	g.cached = true
 	return nil
 }
 
@@ -160,7 +180,7 @@ func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 		return nil, syscall.EAGAIN
 	}
 
-	return fs.NewListDirStream(g.readdirCache), 0
+	return fs.NewListDirStream(g.inodeCache.Dirents()), 0
 }
 
 func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -173,7 +193,7 @@ func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 		return nil, syscall.EAGAIN
 	}
 
-	if ent, ok := g.lookupIndex[name]; ok {
+	if ent := g.inodeCache.LookupInode(name); ent != nil {
 		if node, ok := ent.Operations().(fs.NodeGetattrer); ok {
 			var attrOut fuse.AttrOut
 			node.Getattr(ctx, nil, &attrOut)
@@ -252,8 +272,7 @@ func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mo
 	of := &overlayFile{treeCtx: g.treeCtx, relativePath: fullRelativePath, fileHandle: fh}
 	ch := g.NewPersistentInode(ctx, of, fs.StableAttr{Mode: st.Mode, Ino: st.Ino})
 
-	g.lookupIndex[name] = ch
-	g.readdirCache = append(g.readdirCache, fuse.DirEntry{Name: name, Mode: mode})
+	g.inodeCache.Upsert(name, mode, ch)
 
 	return ch, fh, 0, 0
 }
