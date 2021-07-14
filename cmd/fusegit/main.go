@@ -84,7 +84,7 @@ func main() {
 	log.Println("Initiated clone")
 
 	var fsStorer storage.Storer
-	fsStorer = filesystem.NewStorage(osfs.New(dir), cache.NewObjectLRUDefault())
+	fsStorer = filesystem.NewStorage(osfs.New(dir), cache.NewObjectLRU(1*cache.MiByte))
 
 	repo, err := git.Clone(fsStorer, nil, &git.CloneOptions{
 		URL: url,
