@@ -92,8 +92,14 @@ func (g *gitTreeInode) scanOverlay() error {
 		return err
 	}
 
+	g.isInitializedInOverlay = true
+
 	for _, dirent := range dirents {
 		if dirent.Type().IsRegular() {
+			of := &overlayFile{treeCtx: g.treeCtx, relativePath: filepath.Join(g.Path(nil), dirent.Name())}
+			mode := uint32(dirent.Type())
+			ch := g.NewPersistentInode(context.Background(), of, fs.StableAttr{Mode: mode})
+			g.inodeCache.Upsert(dirent.Name(), mode, ch)
 		}
 	}
 
@@ -267,12 +273,11 @@ func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mo
 	}
 	out.FromStat(&st)
 
-	fh = fs.NewLoopbackFile(fd)
-
-	of := &overlayFile{treeCtx: g.treeCtx, relativePath: fullRelativePath, fileHandle: fh}
-	ch := g.NewPersistentInode(ctx, of, fs.StableAttr{Mode: st.Mode, Ino: st.Ino})
-
+	of := &overlayFile{treeCtx: g.treeCtx, relativePath: fullRelativePath}
+	ch := g.NewPersistentInode(ctx, of, fs.StableAttr{Mode: st.Mode})
 	g.inodeCache.Upsert(name, mode, ch)
+
+	fh = fs.NewLoopbackFile(fd)
 
 	return ch, fh, 0, 0
 }
@@ -282,11 +287,21 @@ type overlayFile struct {
 
 	treeCtx      *gitTreeContext
 	relativePath string
-	fileHandle   fs.FileHandle
 }
 
 func (g *overlayFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
-	return g.fileHandle.(fs.FileSetattrer).Setattr(ctx, in, out)
+	if fh != nil {
+		return fh.(fs.FileSetattrer).Setattr(ctx, in, out)
+	}
+
+	// NOTE: This is a cop-out way of implementing Setattr instead of copying the code verbatim from LoopbackFile.
+	fd, err := syscall.Open(filepath.Join(g.treeCtx.overlayRoot, g.relativePath), syscall.O_RDONLY, 0)
+	if err != nil {
+		return err.(syscall.Errno)
+	}
+
+	defer syscall.Close(fd)
+	return fs.NewLoopbackFile(fd).(fs.FileSetattrer).Setattr(ctx, in, out)
 }
 
 type gitFile struct {
