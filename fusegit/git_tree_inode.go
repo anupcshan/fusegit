@@ -374,7 +374,12 @@ func (g *gitTreeInode) Rmdir(ctx context.Context, name string) syscall.Errno {
 			return err.(syscall.Errno)
 		}
 
-		// TODO: Handle overlay-only directories
+		// Nuke anything that exists in the overlay directory.
+		fullRelativePath := filepath.Join(g.Path(nil), name)
+		fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+		if err := os.RemoveAll(fullOverlayPath); err != nil {
+			return syscall.EIO
+		}
 	}
 
 	g.inodeCache.Delete(name)
@@ -398,14 +403,27 @@ func (g *gitTreeInode) installTombstone(ctx context.Context, name string) error 
 	return nil
 }
 
+func (g *gitTreeInode) removeTombstone(ctx context.Context, name string) error {
+	fullRelativePath := filepath.Join(g.Path(nil), tombstonePrefix+name)
+	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+	return syscall.Unlink(fullOverlayPath)
+}
+
 func (g *gitTreeInode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if err := g.removeTombstone(ctx, name); err == nil {
+		// TODO: There are corner cases here. We must make sure to install a tombstone for every entry in the underlay directory.
+		// This comes into play if the underlay changed after deletion. E.g., delete a folder with 2 files in commit X (1 tombstone for each file).
+		// Update underlay to a commit where directory has 3 files. Mkdir folder. Now, we magically have at least one new file because of missing tombstones.
+	}
+
 	if err := g.replicateTreeInOverlay(); err != nil {
 		return nil, err.(syscall.Errno)
 	}
 
 	fullRelativePath := filepath.Join(g.Path(nil), name)
 	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
-	if err := syscall.Mkdir(fullOverlayPath, mode); err != nil {
+	if err := syscall.Mkdir(fullOverlayPath, mode); err != nil && err.(syscall.Errno) != syscall.EEXIST {
+		// Its OK for syscall to return EEXIST in case when we are mkdir'ing a previously deleted directory which has some tombstone files in them.
 		return nil, err.(syscall.Errno)
 	}
 
