@@ -89,12 +89,22 @@ func (g *gitTreeInode) scanOverlay() error {
 			g.inodeCache.Delete(name)
 			g.RmChild(name)
 		} else if dirent.Type().IsRegular() {
-			of := &overlayFile{treeCtx: g.treeCtx, relativePath: filepath.Join(g.Path(nil), dirent.Name())}
+			name := dirent.Name()
+
+			g.inodeCache.Delete(name)
+			g.RmChild(name)
+
+			of := &overlayFile{treeCtx: g.treeCtx, relativePath: filepath.Join(g.Path(nil), name)}
 			mode := uint32(dirent.Type())
 			ch := g.NewPersistentInode(context.Background(), of, fs.StableAttr{Mode: mode})
-			g.inodeCache.Upsert(dirent.Name(), mode, ch)
+			g.inodeCache.Upsert(name, mode, ch)
 		} else if dirent.Type() == os.ModeSymlink {
-			of := &overlaySymlink{treeCtx: g.treeCtx, relativePath: filepath.Join(g.Path(nil), dirent.Name())}
+			name := dirent.Name()
+
+			g.inodeCache.Delete(name)
+			g.RmChild(name)
+
+			of := &overlaySymlink{treeCtx: g.treeCtx, relativePath: filepath.Join(g.Path(nil), name)}
 			fInfo, err := dirent.Info()
 			if err != nil {
 				// TODO: Maybe don't fail here. This is recoverable.
@@ -102,7 +112,7 @@ func (g *gitTreeInode) scanOverlay() error {
 			}
 			mode := uint32(fInfo.Mode().Perm() | syscall.S_IFLNK)
 			ch := g.NewPersistentInode(context.Background(), of, fs.StableAttr{Mode: mode})
-			g.inodeCache.Upsert(dirent.Name(), mode, ch)
+			g.inodeCache.Upsert(name, mode, ch)
 		}
 	}
 
