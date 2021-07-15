@@ -33,6 +33,9 @@ type gitTreeInode struct {
 	inodes     []*fs.Inode
 }
 
+var _ fs.NodeSymlinker = (*gitTreeInode)(nil)
+var _ fs.NodeUnlinker = (*gitTreeInode)(nil)
+
 func NewGitTreeInode(repo repository, socketPath string, overlayRoot string) *gitTreeInode {
 	return &gitTreeInode{
 		isRoot: true,
@@ -276,8 +279,6 @@ func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fu
 	fullRelativePath := filepath.Join(g.Path(nil), name)
 	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
 
-	log.Printf("About to create symlink from %s to %s", target, fullOverlayPath)
-
 	if err := syscall.Symlink(target, fullOverlayPath); err != nil {
 		return nil, err.(syscall.Errno)
 	}
@@ -289,11 +290,23 @@ func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fu
 	}
 	out.FromStat(&st)
 
-	log.Printf("%x", st.Mode)
-
 	of := &overlaySymlink{treeCtx: g.treeCtx, relativePath: fullRelativePath}
 	ch := g.NewPersistentInode(ctx, of, fs.StableAttr{Mode: st.Mode})
 	g.inodeCache.Upsert(name, st.Mode, ch)
 
 	return ch, 0
+}
+
+func (g *gitTreeInode) Unlink(ctx context.Context, name string) syscall.Errno {
+	fullRelativePath := filepath.Join(g.Path(nil), name)
+	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+
+	if err := syscall.Unlink(fullOverlayPath); err != nil {
+		return err.(syscall.Errno)
+	}
+
+	g.inodeCache.Delete(name)
+
+	g.RmChild(name)
+	return 0
 }

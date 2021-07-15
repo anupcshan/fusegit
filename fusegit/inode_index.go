@@ -33,6 +33,23 @@ func (i *inodeIndex) Upsert(name string, mode uint32, inode *fs.Inode) {
 	i.dirents = append(i.dirents, dirent)
 }
 
+func (i *inodeIndex) Delete(name string) {
+	if idx, found := i.index[name]; found {
+		if idx.pos != len(i.dirents)-1 {
+			// Move the last element over to the position that was deleted.
+			lastElem := i.dirents[len(i.dirents)-1]
+			i.dirents[idx.pos] = lastElem
+			toUpdate := i.index[lastElem.Name]
+			toUpdate.pos = idx.pos
+			i.index[lastElem.Name] = toUpdate
+		}
+
+		i.dirents = i.dirents[:len(i.dirents)-1]
+	}
+
+	delete(i.index, name)
+}
+
 func (i *inodeIndex) Dirents() []fuse.DirEntry {
 	return i.dirents
 }
