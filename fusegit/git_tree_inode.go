@@ -36,6 +36,7 @@ type gitTreeInode struct {
 	inodes     []*fs.Inode
 }
 
+var _ fs.NodeRmdirer = (*gitTreeInode)(nil)
 var _ fs.NodeSymlinker = (*gitTreeInode)(nil)
 var _ fs.NodeUnlinker = (*gitTreeInode)(nil)
 
@@ -322,6 +323,10 @@ func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fu
 func (g *gitTreeInode) Unlink(ctx context.Context, name string) syscall.Errno {
 	switch g.inodeCache.LookupInode(name).Operations().(type) {
 	case *gitFile, *gitSymlink:
+		if err := g.replicateTreeInOverlay(); err != nil {
+			return err.(syscall.Errno)
+		}
+
 		fullRelativePath := filepath.Join(g.Path(nil), tombstonePrefix+name)
 		fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
 		fd, err := syscall.Creat(fullOverlayPath, 0550)
@@ -331,11 +336,38 @@ func (g *gitTreeInode) Unlink(ctx context.Context, name string) syscall.Errno {
 		syscall.Close(fd)
 
 	case *overlayFile, *overlaySymlink:
+		if err := g.replicateTreeInOverlay(); err != nil {
+			return err.(syscall.Errno)
+		}
+
 		fullRelativePath := filepath.Join(g.Path(nil), name)
 		fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
 		if err := syscall.Unlink(fullOverlayPath); err != nil {
 			return err.(syscall.Errno)
 		}
+	}
+
+	g.inodeCache.Delete(name)
+	g.RmChild(name)
+	return 0
+}
+
+func (g *gitTreeInode) Rmdir(ctx context.Context, name string) syscall.Errno {
+	switch g.inodeCache.LookupInode(name).Operations().(type) {
+	case *gitTreeInode:
+		if err := g.replicateTreeInOverlay(); err != nil {
+			return err.(syscall.Errno)
+		}
+
+		fullRelativePath := filepath.Join(g.Path(nil), tombstonePrefix+name)
+		fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+		fd, err := syscall.Creat(fullOverlayPath, 0550)
+		if err != nil {
+			return err.(syscall.Errno)
+		}
+		syscall.Close(fd)
+
+		// TODO: Handle overlay-only directories
 	}
 
 	g.inodeCache.Delete(name)
