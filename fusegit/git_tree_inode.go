@@ -17,7 +17,8 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
-const tombstonePrefix = ".__TOMBSTONE_"
+const tombstonePrefix = ".__FUSEGIT_TOMBSTONE__"
+const ignoreUnderlayFlagFilename = ".__FUSEGIT_IGNOREUNDERLAY__"
 
 type gitTreeInode struct {
 	fs.Inode
@@ -82,15 +83,36 @@ func (g *gitTreeInode) scanOverlay() error {
 
 	g.isInitializedInOverlay = true
 
+	// Ordering of tombstone and non-tombstone entries matter. Always process tombstone/ignore underlay markers first. These never apply to overlay contents.
+	// Once marker files are processed, handle all regular overlay entities.
+
+	var ignoreUnderlay bool
+	var files, directories []os.DirEntry
+
 	for _, dirent := range dirents {
-		// TODO: Ordering of tombstone and non-tombstone entries matter.
-		// Currently, if we delete an entry (add a tombstone) and then add a replacing file, both the tombstone and new files are present.
-		// It will work fine as long as the replaced file name comes after `tombstonePrefix`, which is usually true, but can fail for names like `.bazelrc`.
+		// In the initial pass, handle all tombstone files and ignore underlay markers.
 		if strings.HasPrefix(dirent.Name(), tombstonePrefix) {
 			name := dirent.Name()[len(tombstonePrefix):]
 			g.inodeCache.Delete(name)
 			g.RmChild(name)
-		} else if dirent.Type().IsRegular() {
+		} else if dirent.Name() == ignoreUnderlayFlagFilename {
+			ignoreUnderlay = true
+		} else if dirent.Type() != os.ModeDir {
+			files = append(files, dirent)
+		} else {
+			directories = append(directories, dirent)
+		}
+	}
+
+	if ignoreUnderlay {
+		for _, dirent := range g.inodeCache.Dirents() {
+			g.inodeCache.Delete(dirent.Name)
+			g.RmChild(dirent.Name)
+		}
+	}
+
+	for _, dirent := range files {
+		if dirent.Type().IsRegular() {
 			name := dirent.Name()
 
 			g.inodeCache.Delete(name)
@@ -115,23 +137,24 @@ func (g *gitTreeInode) scanOverlay() error {
 			mode := uint32(fInfo.Mode().Perm() | syscall.S_IFLNK)
 			ch := g.NewPersistentInode(context.Background(), of, fs.StableAttr{Mode: mode})
 			g.inodeCache.Upsert(name, mode, ch)
-		} else if dirent.Type() == os.ModeDir {
-			name := dirent.Name()
-
-			// If we encounter a directory in the overlay, first check if a node with the same name exists in the underlay/git tree.
-			// If yes, don't bother changing anything. If the underlay node is a directory, it will correctly pick up everything in that directory.
-			// TODO: Handle if the directory was a file/symlink with a corresponding tombstone (always process tombstones first).
-			// If this directory doesn't exist in the underlay, it should be treated as a new directory node.
-
-			if g.inodeCache.LookupInode(name) != nil {
-				// Already exists. Ignore and keep going
-				continue
-			}
-
-			dir := &gitTreeInode{treeCtx: g.treeCtx}
-			inode := g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
-			g.inodeCache.Upsert(name, syscall.S_IFDIR, inode)
 		}
+	}
+
+	for _, dirent := range directories {
+		name := dirent.Name()
+
+		// If we encounter a directory in the overlay, first check if a node with the same name exists in the underlay/git tree.
+		// If yes, don't bother changing anything. If the underlay node is a directory, it will correctly pick up everything in that directory.
+		// If this directory doesn't exist in the underlay, it should be treated as a new directory node.
+
+		if g.inodeCache.LookupInode(name) != nil {
+			// Already exists. Ignore and keep going
+			continue
+		}
+
+		dir := &gitTreeInode{treeCtx: g.treeCtx}
+		inode := g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
+		g.inodeCache.Upsert(name, syscall.S_IFDIR, inode)
 	}
 
 	return nil
@@ -409,12 +432,23 @@ func (g *gitTreeInode) removeTombstone(ctx context.Context, name string) error {
 	return syscall.Unlink(fullOverlayPath)
 }
 
-func (g *gitTreeInode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	if err := g.removeTombstone(ctx, name); err == nil {
-		// TODO: There are corner cases here. We must make sure to install a tombstone for every entry in the underlay directory.
-		// This comes into play if the underlay changed after deletion. E.g., delete a folder with 2 files in commit X (1 tombstone for each file).
-		// Update underlay to a commit where directory has 3 files. Mkdir folder. Now, we magically have at least one new file because of missing tombstones.
+func (g *gitTreeInode) emitIgnoreUnderlayMarker(ctx context.Context, name string) error {
+	fullRelativePath := filepath.Join(g.Path(nil), name, ignoreUnderlayFlagFilename)
+	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+	fd, err := syscall.Creat(fullOverlayPath, 0550)
+	if err != nil {
+		return err
 	}
+	syscall.Close(fd)
+
+	return nil
+}
+
+func (g *gitTreeInode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	// TODO: There are corner cases here. We must make sure to install a tombstone for every entry in the underlay directory.
+	// This comes into play if the underlay changed after deletion. E.g., delete a folder with 2 files in commit X (1 tombstone for each file).
+	// Update underlay to a commit where directory has 3 files. Mkdir folder. Now, we magically have at least one new file because of missing tombstones.
+	g.removeTombstone(ctx, name)
 
 	if err := g.replicateTreeInOverlay(); err != nil {
 		return nil, err.(syscall.Errno)
@@ -424,6 +458,11 @@ func (g *gitTreeInode) Mkdir(ctx context.Context, name string, mode uint32, out 
 	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
 	if err := syscall.Mkdir(fullOverlayPath, mode); err != nil && err.(syscall.Errno) != syscall.EEXIST {
 		// Its OK for syscall to return EEXIST in case when we are mkdir'ing a previously deleted directory which has some tombstone files in them.
+		return nil, err.(syscall.Errno)
+	}
+
+	if err := g.emitIgnoreUnderlayMarker(ctx, name); err != nil {
+		// TODO: Cleanup
 		return nil, err.(syscall.Errno)
 	}
 
