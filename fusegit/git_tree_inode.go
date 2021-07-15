@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
+
+const tombstonePrefix = ".__TOMBSTONE_"
 
 type gitTreeInode struct {
 	fs.Inode
@@ -78,7 +81,14 @@ func (g *gitTreeInode) scanOverlay() error {
 	g.isInitializedInOverlay = true
 
 	for _, dirent := range dirents {
-		if dirent.Type().IsRegular() {
+		// TODO: Ordering of tombstone and non-tombstone entries matter.
+		// Currently, if we delete an entry (add a tombstone) and then add a replacing file, both the tombstone and new files are present.
+		// It will work fine as long as the replaced file name comes after `tombstonePrefix`, which is usually true, but can fail for names like `.bazelrc`.
+		if strings.HasPrefix(dirent.Name(), tombstonePrefix) {
+			name := dirent.Name()[len(tombstonePrefix):]
+			g.inodeCache.Delete(name)
+			g.RmChild(name)
+		} else if dirent.Type().IsRegular() {
 			of := &overlayFile{treeCtx: g.treeCtx, relativePath: filepath.Join(g.Path(nil), dirent.Name())}
 			mode := uint32(dirent.Type())
 			ch := g.NewPersistentInode(context.Background(), of, fs.StableAttr{Mode: mode})
@@ -241,6 +251,7 @@ func (g *gitTreeInode) replicateTreeInOverlay() error {
 }
 
 func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (node *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	// TODO: Clear any existing tombstone records on success.
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -276,6 +287,7 @@ func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mo
 }
 
 func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	// TODO: Clear any existing tombstone records on success.
 	fullRelativePath := filepath.Join(g.Path(nil), name)
 	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
 
@@ -298,15 +310,25 @@ func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fu
 }
 
 func (g *gitTreeInode) Unlink(ctx context.Context, name string) syscall.Errno {
-	fullRelativePath := filepath.Join(g.Path(nil), name)
-	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+	switch g.inodeCache.LookupInode(name).Operations().(type) {
+	case *gitFile, *gitSymlink:
+		fullRelativePath := filepath.Join(g.Path(nil), tombstonePrefix+name)
+		fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+		fd, err := syscall.Creat(fullOverlayPath, 0550)
+		if err != nil {
+			return err.(syscall.Errno)
+		}
+		syscall.Close(fd)
 
-	if err := syscall.Unlink(fullOverlayPath); err != nil {
-		return err.(syscall.Errno)
+	case *overlayFile, *overlaySymlink:
+		fullRelativePath := filepath.Join(g.Path(nil), name)
+		fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+		if err := syscall.Unlink(fullOverlayPath); err != nil {
+			return err.(syscall.Errno)
+		}
 	}
 
 	g.inodeCache.Delete(name)
-
 	g.RmChild(name)
 	return 0
 }
