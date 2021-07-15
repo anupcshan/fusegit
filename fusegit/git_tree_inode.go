@@ -445,9 +445,8 @@ func (g *gitTreeInode) emitIgnoreUnderlayMarker(ctx context.Context, name string
 }
 
 func (g *gitTreeInode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	// TODO: There are corner cases here. We must make sure to install a tombstone for every entry in the underlay directory.
-	// This comes into play if the underlay changed after deletion. E.g., delete a folder with 2 files in commit X (1 tombstone for each file).
-	// Update underlay to a commit where directory has 3 files. Mkdir folder. Now, we magically have at least one new file because of missing tombstones.
+	// TODO: There are some error handling gotchas here.
+	// For example, removing the tombstone and then failing to mkdir will make any underlay directories to reappear. Figure out the right way to order these.
 	g.removeTombstone(ctx, name)
 
 	if err := g.replicateTreeInOverlay(); err != nil {
