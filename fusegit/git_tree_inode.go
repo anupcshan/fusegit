@@ -323,17 +323,9 @@ func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fu
 func (g *gitTreeInode) Unlink(ctx context.Context, name string) syscall.Errno {
 	switch g.inodeCache.LookupInode(name).Operations().(type) {
 	case *gitFile, *gitSymlink:
-		if err := g.replicateTreeInOverlay(); err != nil {
+		if err := g.installTombstone(ctx, name); err != nil {
 			return err.(syscall.Errno)
 		}
-
-		fullRelativePath := filepath.Join(g.Path(nil), tombstonePrefix+name)
-		fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
-		fd, err := syscall.Creat(fullOverlayPath, 0550)
-		if err != nil {
-			return err.(syscall.Errno)
-		}
-		syscall.Close(fd)
 
 	case *overlayFile, *overlaySymlink:
 		if err := g.replicateTreeInOverlay(); err != nil {
@@ -355,17 +347,9 @@ func (g *gitTreeInode) Unlink(ctx context.Context, name string) syscall.Errno {
 func (g *gitTreeInode) Rmdir(ctx context.Context, name string) syscall.Errno {
 	switch g.inodeCache.LookupInode(name).Operations().(type) {
 	case *gitTreeInode:
-		if err := g.replicateTreeInOverlay(); err != nil {
+		if err := g.installTombstone(ctx, name); err != nil {
 			return err.(syscall.Errno)
 		}
-
-		fullRelativePath := filepath.Join(g.Path(nil), tombstonePrefix+name)
-		fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
-		fd, err := syscall.Creat(fullOverlayPath, 0550)
-		if err != nil {
-			return err.(syscall.Errno)
-		}
-		syscall.Close(fd)
 
 		// TODO: Handle overlay-only directories
 	}
@@ -373,4 +357,20 @@ func (g *gitTreeInode) Rmdir(ctx context.Context, name string) syscall.Errno {
 	g.inodeCache.Delete(name)
 	g.RmChild(name)
 	return 0
+}
+
+func (g *gitTreeInode) installTombstone(ctx context.Context, name string) error {
+	if err := g.replicateTreeInOverlay(); err != nil {
+		return err.(syscall.Errno)
+	}
+
+	fullRelativePath := filepath.Join(g.Path(nil), tombstonePrefix+name)
+	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+	fd, err := syscall.Creat(fullOverlayPath, 0550)
+	if err != nil {
+		return err
+	}
+	syscall.Close(fd)
+
+	return nil
 }
