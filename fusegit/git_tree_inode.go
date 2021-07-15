@@ -36,6 +36,7 @@ type gitTreeInode struct {
 	inodes     []*fs.Inode
 }
 
+var _ fs.NodeMkdirer = (*gitTreeInode)(nil)
 var _ fs.NodeRmdirer = (*gitTreeInode)(nil)
 var _ fs.NodeSymlinker = (*gitTreeInode)(nil)
 var _ fs.NodeUnlinker = (*gitTreeInode)(nil)
@@ -114,6 +115,22 @@ func (g *gitTreeInode) scanOverlay() error {
 			mode := uint32(fInfo.Mode().Perm() | syscall.S_IFLNK)
 			ch := g.NewPersistentInode(context.Background(), of, fs.StableAttr{Mode: mode})
 			g.inodeCache.Upsert(name, mode, ch)
+		} else if dirent.Type() == os.ModeDir {
+			name := dirent.Name()
+
+			// If we encounter a directory in the overlay, first check if a node with the same name exists in the underlay/git tree.
+			// If yes, don't bother changing anything. If the underlay node is a directory, it will correctly pick up everything in that directory.
+			// TODO: Handle if the directory was a file/symlink with a corresponding tombstone (always process tombstones first).
+			// If this directory doesn't exist in the underlay, it should be treated as a new directory node.
+
+			if g.inodeCache.LookupInode(name) != nil {
+				// Already exists. Ignore and keep going
+				continue
+			}
+
+			dir := &gitTreeInode{treeCtx: g.treeCtx}
+			inode := g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
+			g.inodeCache.Upsert(name, syscall.S_IFDIR, inode)
 		}
 	}
 
@@ -123,13 +140,17 @@ func (g *gitTreeInode) scanOverlay() error {
 func (g *gitTreeInode) scanTree() error {
 	defer printTimeSince("Scan Tree", time.Now())
 
+	if g.treeHash == plumbing.ZeroHash {
+		// We either have an actual git hash with all zeros or this signifies an overlay-only directory.
+		// We're going to assume its an overlay-only directory.
+		return nil
+	}
+
 	tree, err := g.treeCtx.repo.TreeObject(g.treeHash)
 	if err != nil {
 		log.Printf("Error fetching tree object %s", g.treeHash)
 		return io.ErrUnexpectedEOF
 	}
-
-	g.inodeCache = NewInodeCache()
 
 	for _, ent := range tree.Entries {
 		var mode uint32
@@ -163,6 +184,8 @@ func (g *gitTreeInode) cacheAttrs() error {
 	if g.cached {
 		return nil
 	}
+
+	g.inodeCache = NewInodeCache()
 
 	if err := g.scanTree(); err != nil {
 		return err
@@ -373,4 +396,22 @@ func (g *gitTreeInode) installTombstone(ctx context.Context, name string) error 
 	syscall.Close(fd)
 
 	return nil
+}
+
+func (g *gitTreeInode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if err := g.replicateTreeInOverlay(); err != nil {
+		return nil, err.(syscall.Errno)
+	}
+
+	fullRelativePath := filepath.Join(g.Path(nil), name)
+	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
+	if err := syscall.Mkdir(fullOverlayPath, mode); err != nil {
+		return nil, err.(syscall.Errno)
+	}
+
+	dir := &gitTreeInode{treeCtx: g.treeCtx}
+	inode := g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
+	g.inodeCache.Upsert(name, mode, inode)
+
+	return inode, 0
 }
