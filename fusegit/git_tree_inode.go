@@ -188,7 +188,7 @@ func (g *gitTreeInode) scanTree() error {
 			symlink := &gitSymlink{treeCtx: g.treeCtx, blobHash: ent.Hash}
 			inode = g.NewPersistentInode(context.Background(), symlink, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else if ent.Mode.IsFile() {
-			file := &gitFile{treeCtx: g.treeCtx, blobHash: ent.Hash}
+			file := &gitFile{treeCtx: g.treeCtx, blobHash: ent.Hash, name: ent.Name}
 			inode = g.NewPersistentInode(context.Background(), file, fs.StableAttr{Mode: uint32(ent.Mode)})
 		} else if ent.Mode == filemode.Submodule {
 			dir := &gitTreeInode{treeCtx: g.treeCtx, treeHash: ent.Hash}
@@ -319,6 +319,7 @@ func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mo
 		return nil, nil, 0, err.(syscall.Errno)
 	}
 
+	log.Printf("Creating file with mode %x", mode)
 	fd, err := syscall.Creat(fullOverlayPath, mode)
 
 	if err != nil {
