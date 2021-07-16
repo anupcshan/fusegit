@@ -38,6 +38,7 @@ type gitTreeInode struct {
 }
 
 var _ fs.NodeMkdirer = (*gitTreeInode)(nil)
+var _ fs.NodeRenamer = (*gitTreeInode)(nil)
 var _ fs.NodeRmdirer = (*gitTreeInode)(nil)
 var _ fs.NodeSymlinker = (*gitTreeInode)(nil)
 var _ fs.NodeUnlinker = (*gitTreeInode)(nil)
@@ -469,4 +470,35 @@ func (g *gitTreeInode) Mkdir(ctx context.Context, name string, mode uint32, out 
 	g.inodeCache.Upsert(name, mode, inode)
 
 	return inode, 0
+}
+
+func (g *gitTreeInode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
+	targetDirGitInode := newParent.EmbeddedInode().Operations().(*gitTreeInode)
+
+	inode := g.inodeCache.LookupInode(name)
+	ops := inode.Operations()
+	switch ops.(type) {
+	case *gitFile:
+		if err := ops.(*gitFile).ensureReplicated(); err != nil {
+			return err.(syscall.Errno)
+		}
+
+		// TODO: Handle gitSymlink
+	}
+
+	g.RmChild(name)
+	g.inodeCache.Delete(name)
+	fullSrcOverlayPath := filepath.Join(g.treeCtx.overlayRoot, g.Path(nil), name)
+
+	fullTargetOverlayPath := filepath.Join(g.treeCtx.overlayRoot, targetDirGitInode.Path(nil), newName)
+
+	// Ensure any target entry which might be getting overwritten is nuked
+	targetDirGitInode.inodeCache.Delete(newName)
+	targetDirGitInode.inodeCache.Upsert(newName, 0100664, newParent.EmbeddedInode().NewPersistentInode(ctx, inode.Operations(), fs.StableAttr{Mode: 0100664}))
+
+	err := syscall.Rename(fullSrcOverlayPath, fullTargetOverlayPath)
+	if err != nil {
+		return err.(syscall.Errno)
+	}
+	return 0
 }
