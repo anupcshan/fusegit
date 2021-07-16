@@ -3,6 +3,7 @@ package fusegit
 import (
 	"context"
 	"log"
+	"os"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -30,15 +31,26 @@ func (f *overlayFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.Se
 		return fh.(fs.FileSetattrer).Setattr(ctx, in, out)
 	}
 
-	// NOTE: This is a cop-out way of implementing Setattr instead of copying the code verbatim from LoopbackFile.
-	fd, err := syscall.Open(f.fullPath(), syscall.O_RDWR, 0)
-	if err != nil {
-		log.Println("Error opening", err)
-		return err.(syscall.Errno)
+	if mode, ok := in.GetMode(); ok {
+		if err := os.Chmod(f.fullPath(), os.FileMode(mode)); err != nil {
+			return err.(syscall.Errno)
+		}
 	}
 
-	defer syscall.Close(fd)
-	return fs.NewLoopbackFile(fd).(fs.FileSetattrer).Setattr(ctx, in, out)
+	if size, ok := in.GetSize(); ok {
+		if err := syscall.Truncate(f.fullPath(), int64(size)); err != nil {
+			return err.(syscall.Errno)
+		}
+	}
+
+	var st syscall.Stat_t
+	if err := syscall.Lstat(f.fullPath(), &st); err != nil {
+		return err.(syscall.Errno)
+	}
+	out.FromStat(&st)
+	out.SetTimeout(DefaultCacheTimeout)
+
+	return 0
 }
 
 func (f *overlayFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {

@@ -289,14 +289,13 @@ func (g *gitTreeInode) replicateTreeInOverlay() error {
 		return nil
 	}
 
-	parentName, parentInode := g.Parent()
+	_, parentInode := g.Parent()
 	parentTreeInode := parentInode.Operations().(*gitTreeInode)
 
 	if err := parentTreeInode.replicateTreeInOverlay(); err != nil {
 		return err
 	}
 
-	log.Println("Creating parent dir", parentName, parentTreeInode)
 	if err := syscall.Mkdir(filepath.Join(g.treeCtx.overlayRoot, g.Path(nil)), 0775); err != nil {
 		log.Println("Error creating dir", err)
 		return err
@@ -319,7 +318,6 @@ func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mo
 		return nil, nil, 0, err.(syscall.Errno)
 	}
 
-	log.Printf("Creating file with mode %x", mode)
 	fd, err := syscall.Creat(fullOverlayPath, mode)
 
 	if err != nil {
@@ -334,14 +332,14 @@ func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mo
 		return nil, nil, 0, err.(syscall.Errno)
 	}
 	out.FromStat(&st)
+	out.SetAttrTimeout(DefaultCacheTimeout)
+	out.SetEntryTimeout(DefaultCacheTimeout)
 
 	of := &overlayFile{treeCtx: g.treeCtx, relativePath: fullRelativePath}
 	ch := g.NewPersistentInode(ctx, of, fs.StableAttr{Mode: st.Mode})
 	g.inodeCache.Upsert(name, mode, ch)
 
-	fh = fs.NewLoopbackFile(fd)
-
-	return ch, fh, 0, 0
+	return ch, fs.NewLoopbackFile(fd), 0, 0
 }
 
 func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
