@@ -26,6 +26,8 @@ type gitFile struct {
 	blobHash  plumbing.Hash
 	cached    bool
 	cachedObj *object.Blob
+
+	replicatedObj *overlayFile
 }
 
 var _ fs.NodeSetattrer = (*gitFile)(nil)
@@ -63,19 +65,17 @@ func (f *gitFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrO
 	return 0
 }
 
-func (f *gitFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
-	if fh != nil {
-		return fh.(fs.FileSetattrer).Setattr(ctx, in, out)
+func (f *gitFile) ensureReplicated() error {
+	// Taking a lock while performing a pretty heavy IO operation is bad. But we're taking this lock over the whole thing for simplicity.
+	// Might be possible to break it down for better perf in the future, if required.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.replicatedObj != nil {
+		return nil
 	}
 
-	if f.cacheAttrs() != nil {
-		return syscall.EAGAIN
-	}
-
-	// TODO: We can check if any of the attributes actually changed from their original values. If not, its possible to simply no-op
-	// instead of making this an overlay file. For simplicity, just make this an overlay file always.
-
-	ovf := &overlayFile{
+	f.replicatedObj = &overlayFile{
 		treeCtx:      f.treeCtx,
 		relativePath: f.Path(nil),
 	}
@@ -83,18 +83,11 @@ func (f *gitFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAtt
 	parentGitTreeInode := parentDirInode.Operations().(*gitTreeInode)
 	if err := parentGitTreeInode.replicateTreeInOverlay(); err != nil {
 		log.Println("Error replicating", err)
-		return err.(syscall.Errno)
+		return err
 	}
 
-	mode, ok := in.GetMode()
-	if !ok {
-		// TODO: Preserve mode from original file
-		mode = 0666
-	}
-	size, ok := in.GetSize()
-	if !ok {
-		size = uint64(f.cachedObj.Size)
-	}
+	// TODO: Preserve mode from original file
+	mode := uint32(0666)
 
 	if newF, err := os.OpenFile(filepath.Join(f.treeCtx.overlayRoot, f.Path(nil)), os.O_WRONLY|os.O_CREATE, os.FileMode(mode)); err != nil {
 		log.Println("Error opening file", err)
@@ -111,22 +104,31 @@ func (f *gitFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAtt
 		}
 
 		_ = newF.Close()
-
-		if size != uint64(f.cachedObj.Size) {
-			os.Truncate(filepath.Join(f.treeCtx.overlayRoot, f.Path(nil)), int64(size))
-		}
 	}
 
-	ch := parentGitTreeInode.NewPersistentInode(context.Background(), ovf, fs.StableAttr{Mode: mode})
+	ch := parentGitTreeInode.NewPersistentInode(context.Background(), f.replicatedObj, fs.StableAttr{Mode: mode})
 	log.Println(parentGitTreeInode.RmChild(f.name))
 	parentGitTreeInode.NotifyEntry(f.name)
 	parentGitTreeInode.inodeCache.Delete(f.name)
 	parentGitTreeInode.inodeCache.Upsert(f.name, mode, ch)
 
-	out.Mode = mode
-	out.Attr.Size = size
-	out.SetTimeout(DefaultCacheTimeout)
-	return 0
+	return nil
+}
+
+func (f *gitFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+	if fh != nil {
+		return fh.(fs.FileSetattrer).Setattr(ctx, in, out)
+	}
+
+	if f.cacheAttrs() != nil {
+		return syscall.EAGAIN
+	}
+
+	if f.ensureReplicated() != nil {
+		return syscall.EAGAIN
+	}
+
+	return f.replicatedObj.Setattr(ctx, fh, in, out)
 }
 
 func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -164,4 +166,12 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0
+}
+
+func (f *gitFile) Write(ctx context.Context, fh fs.FileHandle, data []byte, off int64) (written uint32, errno syscall.Errno) {
+	if f.ensureReplicated() != nil {
+		return 0, syscall.EAGAIN
+	}
+
+	return f.replicatedObj.Write(ctx, f, data, off)
 }

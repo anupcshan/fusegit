@@ -66,3 +66,20 @@ func (f *overlayFile) Open(ctx context.Context, flags uint32) (fh fs.FileHandle,
 
 	return fs.NewLoopbackFile(fd), 0, 0
 }
+
+func (f *overlayFile) Write(ctx context.Context, fh fs.FileHandle, data []byte, off int64) (written uint32, errno syscall.Errno) {
+	if fh != nil {
+		if _, ok := fh.(fs.FileWriter); ok {
+			return fh.(fs.FileWriter).Write(ctx, data, off)
+		}
+	}
+
+	fd, err := syscall.Open(f.fullPath(), syscall.O_RDWR, 0)
+	if err != nil {
+		log.Println("Error opening", err)
+		return 0, err.(syscall.Errno)
+	}
+
+	defer syscall.Close(fd)
+	return fs.NewLoopbackFile(fd).(fs.FileWriter).Write(ctx, data, off)
+}
