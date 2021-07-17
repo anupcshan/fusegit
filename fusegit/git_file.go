@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -57,6 +56,7 @@ func (f *gitFile) cacheAttrs() error {
 }
 
 func (f *gitFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	defer f.treeCtx.logCall(ctx, f.Inode, "gitFile.GetAttr")()
 	if f.cacheAttrs() != nil {
 		return syscall.EAGAIN
 	}
@@ -107,7 +107,7 @@ func (f *gitFile) ensureReplicated() error {
 	}
 
 	ch := parentGitTreeInode.NewPersistentInode(context.Background(), f.replicatedObj, fs.StableAttr{Mode: mode})
-	log.Println(parentGitTreeInode.RmChild(f.name))
+	parentGitTreeInode.RmChild(f.name)
 	parentGitTreeInode.NotifyEntry(f.name)
 	parentGitTreeInode.inodeCache.Delete(f.name)
 	parentGitTreeInode.inodeCache.Upsert(f.name, mode, ch)
@@ -132,10 +132,11 @@ func (f *gitFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAtt
 }
 
 func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	defer f.treeCtx.logCall(ctx, f.Inode, "gitFile.Read")()
+
 	if f.cacheAttrs() != nil {
 		return nil, syscall.EAGAIN
 	}
-	defer printTimeSince("Reading file", time.Now())
 
 	r, err := f.cachedObj.Reader()
 	if err != nil {

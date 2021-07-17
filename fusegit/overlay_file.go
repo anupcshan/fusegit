@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -27,6 +26,7 @@ func (f *overlayFile) fullPath() string {
 }
 
 func (f *overlayFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+	defer f.treeCtx.logCall(ctx, f.Inode, "overlayFile.Setattr")()
 	if fh != nil {
 		return fh.(fs.FileSetattrer).Setattr(ctx, in, out)
 	}
@@ -54,6 +54,7 @@ func (f *overlayFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.Se
 }
 
 func (f *overlayFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	defer f.treeCtx.logCall(ctx, f.Inode, "overlayFile.Getattr")()
 	if fh != nil {
 		return fh.(fs.FileGetattrer).Getattr(ctx, out)
 	}
@@ -68,7 +69,7 @@ func (f *overlayFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.A
 }
 
 func (f *overlayFile) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	defer printTimeSince("Open", time.Now())
+	defer f.treeCtx.logCall(ctx, f.Inode, "overlayFile.Open")()
 
 	fd, err := syscall.Open(f.fullPath(), int(flags), 0)
 	if err != nil {
@@ -80,6 +81,7 @@ func (f *overlayFile) Open(ctx context.Context, flags uint32) (fh fs.FileHandle,
 }
 
 func (f *overlayFile) Write(ctx context.Context, fh fs.FileHandle, data []byte, off int64) (written uint32, errno syscall.Errno) {
+	defer f.treeCtx.logCall(ctx, f.Inode, "overlayFile.Write")()
 	if fh != nil {
 		if _, ok := fh.(fs.FileWriter); ok {
 			return fh.(fs.FileWriter).Write(ctx, data, off)

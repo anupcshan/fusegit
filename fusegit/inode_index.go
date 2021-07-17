@@ -49,7 +49,6 @@ func (i *inodeIndex) Delete(name string) (found bool) {
 		i.dirents = i.dirents[:len(i.dirents)-1]
 
 		delete(i.index, name)
-		log.Println("[Delete] Successfully deleted", name)
 		return true
 	}
 

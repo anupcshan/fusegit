@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -43,10 +42,11 @@ var _ fs.NodeRmdirer = (*gitTreeInode)(nil)
 var _ fs.NodeSymlinker = (*gitTreeInode)(nil)
 var _ fs.NodeUnlinker = (*gitTreeInode)(nil)
 
-func NewGitTreeInode(repo repository, socketPath string, overlayRoot string) *gitTreeInode {
+func NewGitTreeInode(repo repository, socketPath string, overlayRoot string, debug bool) *gitTreeInode {
 	return &gitTreeInode{
 		isRoot: true,
 		treeCtx: &gitTreeContext{
+			debug:       debug,
 			overlayRoot: overlayRoot,
 			repo:        repo,
 			socketPath:  []byte(socketPath),
@@ -161,8 +161,8 @@ func (g *gitTreeInode) scanOverlay() error {
 	return nil
 }
 
-func (g *gitTreeInode) scanTree() error {
-	defer printTimeSince("Scan Tree", time.Now())
+func (g *gitTreeInode) scanTree(ctx context.Context) error {
+	defer g.treeCtx.logCall(ctx, g.Inode, "gitTreeInode.scanTree")()
 
 	if g.treeHash == plumbing.ZeroHash {
 		// We either have an actual git hash with all zeros or this signifies an overlay-only directory.
@@ -199,19 +199,22 @@ func (g *gitTreeInode) scanTree() error {
 			inode = g.NewPersistentInode(context.Background(), dir, fs.StableAttr{Mode: syscall.S_IFDIR})
 		}
 		g.inodeCache.Upsert(ent.Name, mode, inode)
+		g.AddChild(ent.Name, inode, false)
 	}
 
 	return nil
 }
 
-func (g *gitTreeInode) cacheAttrs() error {
+func (g *gitTreeInode) cacheAttrs(ctx context.Context) error {
 	if g.cached {
 		return nil
 	}
 
+	defer g.treeCtx.logCall(ctx, g.Inode, "gitTreeInode.cacheAttrs")()
+
 	g.inodeCache = NewInodeCache()
 
-	if err := g.scanTree(); err != nil {
+	if err := g.scanTree(ctx); err != nil {
 		return err
 	}
 
@@ -238,12 +241,12 @@ func (g *gitTreeInode) cacheAttrs() error {
 }
 
 func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	defer printTimeSince("Readdir", time.Now())
+	defer g.treeCtx.logCall(ctx, g.Inode, "gitTreeInode.Readdir")()
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if err := g.cacheAttrs(); err != nil {
+	if err := g.cacheAttrs(ctx); err != nil {
 		return nil, syscall.EAGAIN
 	}
 
@@ -251,12 +254,12 @@ func (g *gitTreeInode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 }
 
 func (g *gitTreeInode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	defer printTimeSince("Lookup", time.Now())
+	defer g.treeCtx.logCall(ctx, g.Inode, "gitTreeInode.Lookup %s", name)()
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if err := g.cacheAttrs(); err != nil {
+	if err := g.cacheAttrs(ctx); err != nil {
 		return nil, syscall.EAGAIN
 	}
 
@@ -308,6 +311,8 @@ func (g *gitTreeInode) replicateTreeInOverlay() error {
 }
 
 func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (node *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	defer g.treeCtx.logCall(ctx, g.Inode, "gitTreeInode.Create %s", name)()
+
 	// TODO: Clear any existing tombstone records on success.
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -344,6 +349,8 @@ func (g *gitTreeInode) Create(ctx context.Context, name string, flags uint32, mo
 }
 
 func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	defer g.treeCtx.logCall(ctx, g.Inode, "gitTreeInode.Symlink %s", name)()
+
 	// TODO: Clear any existing tombstone records on success.
 	fullRelativePath := filepath.Join(g.Path(nil), name)
 	fullOverlayPath := filepath.Join(g.treeCtx.overlayRoot, fullRelativePath)
@@ -367,6 +374,7 @@ func (g *gitTreeInode) Symlink(ctx context.Context, target, name string, out *fu
 }
 
 func (g *gitTreeInode) Unlink(ctx context.Context, name string) syscall.Errno {
+	defer g.treeCtx.logCall(ctx, g.Inode, "gitTreeInode.Unlink %s", name)()
 	switch g.inodeCache.LookupInode(name).Operations().(type) {
 	case *gitFile, *gitSymlink:
 		if err := g.installTombstone(ctx, name); err != nil {
@@ -473,6 +481,7 @@ func (g *gitTreeInode) Mkdir(ctx context.Context, name string, mode uint32, out 
 }
 
 func (g *gitTreeInode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
+	defer g.treeCtx.logCall(ctx, g.Inode, "gitTreeInode.Rename %s", name)()
 	targetDirGitInode := newParent.EmbeddedInode().Operations().(*gitTreeInode)
 
 	inode := g.inodeCache.LookupInode(name)

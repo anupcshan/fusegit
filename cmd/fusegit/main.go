@@ -28,7 +28,7 @@ import (
 )
 
 var (
-	debug = flag.Bool("debug", false, "print debug data")
+	verbose = flag.Int("verbose", 0, "Verbose debug level (0=none, 1=internal, 2=fuse)")
 )
 
 func getRepoPaths(url, mountPoint string) (string, string, string, error) {
@@ -66,7 +66,7 @@ func main() {
 		log.Fatalf("Usage:\n %s repo-url MOUNTPOINT", os.Args[0])
 	}
 
-	if *debug {
+	if *verbose > 0 {
 		go func() {
 			// Run a pprof instance in debug mode
 			http.ListenAndServe(":6060", nil)
@@ -103,12 +103,12 @@ func main() {
 	log.Println("Completed clone")
 
 	opts := &fs.Options{}
-	opts.Debug = *debug
+	opts.Debug = *verbose >= 2
 	opts.DisableXAttrs = true
 	opts.UID = uint32(os.Getuid())
 	opts.GID = uint32(os.Getgid())
 
-	rootInode := fusegit.NewGitTreeInode(repo, socketPath, overlayRoot)
+	rootInode := fusegit.NewGitTreeInode(repo, socketPath, overlayRoot, *verbose >= 1)
 
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {
