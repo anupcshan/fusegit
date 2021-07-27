@@ -488,7 +488,7 @@ func (g *gitTreeInode) Rename(ctx context.Context, name string, newParent fs.Ino
 	ops := inode.Operations()
 	switch ops.(type) {
 	case *gitFile:
-		if err := ops.(*gitFile).ensureReplicated(); err != nil {
+		if err := ops.(*gitFile).ensureReplicated(ctx); err != nil {
 			return err.(syscall.Errno)
 		}
 

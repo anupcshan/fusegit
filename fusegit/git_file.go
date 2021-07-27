@@ -65,7 +65,8 @@ func (f *gitFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrO
 	return 0
 }
 
-func (f *gitFile) ensureReplicated() error {
+func (f *gitFile) ensureReplicated(ctx context.Context) error {
+	defer f.treeCtx.logCall(ctx, f.Inode, "gitFile.ensureReplicated")()
 	// Taking a lock while performing a pretty heavy IO operation is bad. But we're taking this lock over the whole thing for simplicity.
 	// Might be possible to break it down for better perf in the future, if required.
 	f.mu.Lock()
@@ -108,7 +109,7 @@ func (f *gitFile) ensureReplicated() error {
 
 	ch := parentGitTreeInode.NewPersistentInode(context.Background(), f.replicatedObj, fs.StableAttr{Mode: mode})
 	parentGitTreeInode.RmChild(f.name)
-	parentGitTreeInode.NotifyEntry(f.name)
+	// parentGitTreeInode.NotifyEntry(f.name)
 	parentGitTreeInode.inodeCache.Delete(f.name)
 	parentGitTreeInode.inodeCache.Upsert(f.name, mode, ch)
 
@@ -116,6 +117,7 @@ func (f *gitFile) ensureReplicated() error {
 }
 
 func (f *gitFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+	defer f.treeCtx.logCall(ctx, f.Inode, "gitFile.Setattr")()
 	if fh != nil {
 		return fh.(fs.FileSetattrer).Setattr(ctx, in, out)
 	}
@@ -124,7 +126,7 @@ func (f *gitFile) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAtt
 		return syscall.EAGAIN
 	}
 
-	if f.ensureReplicated() != nil {
+	if f.ensureReplicated(ctx) != nil {
 		return syscall.EAGAIN
 	}
 
@@ -170,7 +172,7 @@ func (f *gitFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off i
 }
 
 func (f *gitFile) Write(ctx context.Context, fh fs.FileHandle, data []byte, off int64) (written uint32, errno syscall.Errno) {
-	if f.ensureReplicated() != nil {
+	if f.ensureReplicated(ctx) != nil {
 		return 0, syscall.EAGAIN
 	}
 
